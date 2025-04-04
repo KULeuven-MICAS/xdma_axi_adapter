@@ -1,0 +1,29 @@
+.bender/
+tb/
+work-vsim/
+Bender.lock
+.vscode/
+.metals
+.scala-build
+__pycache__
+env
+logs
+.bsp
+
+#  File List Synthesis Files
+*_flist.tcl
+
+#  Modelsim Files
+*.wlf
+modelsim.ini
+*stacktrace*
+transcript
+
+gmon.out
+
+# Docs
+/site/
+/docs/generated/
+
+target/streams/
+target/scala*

@@ -1,0 +1,37 @@
+package:
+  name: xdma_axi_adapter
+  authors:
+    - Fanchen Kong <fanchen.kong@kuleuven.be>
+    - Yunhao Deng <yunhao.deng@kuleuven.be>
+dependencies:
+  axi:          { git: https://github.com/pulp-platform/axi,              version:  0.39.1 }
+  common_cells: { git: https://github.com/pulp-platform/common_cells.git, version:  1.37.0 }
+
+sources:
+  # Source files grouped in levels. Files in level 0 have no dependencies on files in this package.
+  # Files in level 1 only depend on files in level 0.
+  # Files in level 2 on files in levels 1 and 0, etc.
+
+  # Level 0
+  - src/xdma_pkg.sv
+  # Level 1
+  - src/find_first_one_idx.sv
+  # Level 2
+  - src/xdma_req_manager.sv
+  - src/xdma_grant_manager.sv
+  - src/xdma_data_path.sv
+  - src/xdma_burst_reshaper.sv
+  - src/xdma_meta_manager.sv
+  - src/xdma_axi_to_write.sv
+  - src/xdma_write_demux.sv
+  - src/xdma_finish_manager.sv
+  # Level 3
+  - src/xdma_req_backend.sv
+  - src/xdma_axi_adapter_top.sv
+
+  - target: test
+    files:
+      - test/tb_find_first_one_idx.sv
+      - test/tb_xdma_meta_manager.sv
+      - test/tb_xdma_burst_reshaper.sv
+      - test/tb_xdma_axi_adapter_top.sv

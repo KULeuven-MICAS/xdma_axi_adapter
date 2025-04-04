@@ -1,2 +1,7 @@
 # xdma-axi-adapter
-The AXI Adapter for the XDMA Project
+The xdma-axi-adapter is the interface between the xdma and the axi ports.
+# Author
+Fanchen Kong (fanchen.kong@kuleuven.be)
+
+Yunhao Deng (yunhao.deng@kuleuven.be)
+
