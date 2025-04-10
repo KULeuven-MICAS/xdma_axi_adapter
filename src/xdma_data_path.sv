@@ -12,30 +12,30 @@ module xdma_data_path #(
     parameter type xdma_req_w_desc_t = logic
 ) (
     /// Clock
-    input logic                   clk_i,
+    input  logic             clk_i,
     /// Asynchronous reset, active low
-    input logic                   rst_ni,
+    input  logic             rst_ni,
     //
-    input data_t                  write_req_data_i,
+    input  data_t            write_req_data_i,
     //
-    input logic                   write_req_data_valid_i,
+    input  logic             write_req_data_valid_i,
     //
-    output logic                  write_req_data_ready_o,
+    output logic             write_req_data_ready_o,
     //
-    input xdma_req_w_desc_t       w_desc_i,
-    input logic                   w_dp_valid_i,
-    output logic                  w_dp_ready_o,
+    input  xdma_req_w_desc_t w_desc_i,
+    input  logic             w_dp_valid_i,
+    output logic             w_dp_ready_o,
     // w-channel
     /// Write data of the AXI bus
-    output data_t                 w_data_o,
+    output data_t            w_data_o,
     /// Write strobe of the AXI bus
-    output strb_t                 w_strb_o,
+    output strb_t            w_strb_o,
     /// Last signal of the AXI w channel
-    output logic                  w_last_o,
+    output logic             w_last_o,
     /// Valid signal of the AXI w channel
-    output logic                  w_valid_o,
+    output logic             w_valid_o,
     /// Ready signal of the AXI w channel
-    input  logic                  w_ready_i,
+    input  logic             w_ready_i,
     // Grant signal
     // When we issue a write request:
     //  1.CFG will first send to the remote
@@ -45,104 +45,104 @@ module xdma_data_path #(
     // When we issue a read request:
     //  1.CFG will first send to the remote
     //  2.Wait the remote sends the data
-    input  logic                  write_req_grant_i
+    input  logic             write_req_grant_i
 );
 
-    logic counter_en;
-    logic counter_clear;
-    logic counter_load;
-    logic [7:0] beats_counter_q;
-    counter #(
-        .WIDTH(8)
-    ) i_lens_counter(
-        .clk_i     (clk_i              ),
-        .rst_ni    (rst_ni             ),
-        .clear_i   (counter_clear      ),
-        .en_i      (counter_en         ),
-        .load_i    (counter_load       ),
-        .down_i    (1'b1               ),
-        .d_i       (w_desc_i.num_beats ),
-        .q_o       (beats_counter_q    ),
-        .overflow_o()
-    );
+  logic counter_en;
+  logic counter_clear;
+  logic counter_load;
+  logic [7:0] beats_counter_q;
+  counter #(
+      .WIDTH(8)
+  ) i_lens_counter (
+      .clk_i     (clk_i),
+      .rst_ni    (rst_ni),
+      .clear_i   (counter_clear),
+      .en_i      (counter_en),
+      .load_i    (counter_load),
+      .down_i    (1'b1),
+      .d_i       (w_desc_i.num_beats),
+      .q_o       (beats_counter_q),
+      .overflow_o()
+  );
 
-    typedef enum logic [1:0] {
-        IDLE,
-        BUSY,
-        FINISH
-    } state_t;
-    state_t cur_state, next_state;
+  typedef enum logic [1:0] {
+    IDLE,
+    BUSY,
+    FINISH
+  } state_t;
+  state_t cur_state, next_state;
 
-    // State Update
-    always_ff @(posedge clk_i, negedge rst_ni) begin
-        if (!rst_ni) begin
-            cur_state <= IDLE;
-        end else begin
-            cur_state <= next_state;
-        end
+  // State Update
+  always_ff @(posedge clk_i, negedge rst_ni) begin
+    if (!rst_ni) begin
+      cur_state <= IDLE;
+    end else begin
+      cur_state <= next_state;
     end
+  end
 
-    // Next state logic
-    always_comb begin : proc_next_state_logic
-        next_state = cur_state;
-        case (cur_state)
-            IDLE:   if (w_dp_valid_i          ) next_state = BUSY;
-            BUSY:   if (beats_counter_q=='0   ) next_state = FINISH;
-            FINISH: next_state = IDLE;
-        endcase
-    end
+  // Next state logic
+  always_comb begin : proc_next_state_logic
+    next_state = cur_state;
+    case (cur_state)
+      IDLE:   if (w_dp_valid_i) next_state = BUSY;
+      BUSY:   if (beats_counter_q == '0) next_state = FINISH;
+      FINISH: next_state = IDLE;
+    endcase
+  end
 
-    // Output logic
-    always_comb begin : proc_output_logic
+  // Output logic
+  always_comb begin : proc_output_logic
+    w_data_o = 1'b0;
+    w_strb_o = 1'b0;
+    w_last_o = 1'b0;
+    w_valid_o = 1'b0;
+    w_dp_ready_o = 1'b0;
+    write_req_data_ready_o = 1'b0;
+    counter_en = 1'b0;
+    counter_clear = 1'b0;
+    counter_load = 1'b0;
+
+    case (cur_state)
+      IDLE: begin
+        // Wait the w desc is valid
         w_data_o = 1'b0;
         w_strb_o = 1'b0;
         w_last_o = 1'b0;
         w_valid_o = 1'b0;
         w_dp_ready_o = 1'b0;
-        write_req_data_ready_o = 1'b0;
         counter_en = 1'b0;
+        counter_clear = 1'b0;
+        if (w_dp_valid_i) counter_load = 1'b1;
+        write_req_data_ready_o = 1'b0;
+
+      end
+      BUSY: begin
+        w_data_o = write_req_data_i;
+        w_strb_o = '1;
+        w_last_o = (beats_counter_q == 0);
+        w_valid_o = (w_desc_i.is_write_data)? (write_req_grant_i && write_req_data_valid_i) : write_req_data_valid_i;
+        w_dp_ready_o = 1'b0;
+        write_req_data_ready_o = (w_desc_i.is_write_data)? (write_req_grant_i && w_ready_i) : w_ready_i;
+        counter_en = w_valid_o && w_ready_i;
         counter_clear = 1'b0;
         counter_load = 1'b0;
 
-        case (cur_state)
-            IDLE: begin
-              // Wait the w desc is valid
-              w_data_o = 1'b0;
-              w_strb_o = 1'b0;
-              w_last_o = 1'b0;
-              w_valid_o = 1'b0;
-              w_dp_ready_o = 1'b0;
-              counter_en = 1'b0;
-              counter_clear = 1'b0;
-              if (w_dp_valid_i) counter_load = 1'b1;
-              write_req_data_ready_o = 1'b0;
-
-            end
-            BUSY: begin
-              w_data_o = write_req_data_i;
-              w_strb_o = '1;
-              w_last_o = (beats_counter_q==0);
-              w_valid_o = (w_desc_i.is_write_data)? (write_req_grant_i && write_req_data_valid_i) : write_req_data_valid_i;
-              w_dp_ready_o = 1'b0;
-              write_req_data_ready_o = (w_desc_i.is_write_data)? (write_req_grant_i && w_ready_i) : w_ready_i;
-              counter_en = w_valid_o && w_ready_i;
-              counter_clear = 1'b0;
-              counter_load = 1'b0;
-
-            end
-            FINISH: begin
-              w_data_o = 1'b0;
-              w_strb_o = 1'b0;
-              w_last_o = 1'b0;
-              w_valid_o = 1'b0;
-              w_dp_ready_o = 1'b1;
-              write_req_data_ready_o = 1'b0;
-              counter_en = 1'b0;
-              counter_clear = 1'b1;
-              counter_load = 1'b0;
-            end
-        endcase
-    end
+      end
+      FINISH: begin
+        w_data_o = 1'b0;
+        w_strb_o = 1'b0;
+        w_last_o = 1'b0;
+        w_valid_o = 1'b0;
+        w_dp_ready_o = 1'b1;
+        write_req_data_ready_o = 1'b0;
+        counter_en = 1'b0;
+        counter_clear = 1'b1;
+        counter_load = 1'b0;
+      end
+    endcase
+  end
 
 
   // logic [7:0] w_num_beats_d, w_num_beats_q;
