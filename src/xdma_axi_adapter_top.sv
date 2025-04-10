@@ -178,10 +178,10 @@ module xdma_axi_adapter_top
   // Define Macros
   //--------------------------------------
   localparam int SHIFT_BITS = $clog2(ClusterAddressSpace);
-  localparam addr_t MMIODataOffset = (xdma_pkg::FromRemoteData + 1) * (MMIOSize/4) * 1024;
-  localparam addr_t MMIOCFGOffset = (xdma_pkg::FromRemoteCfg + 1) * (MMIOSize/4) * 1024;
-  localparam addr_t MMIOGrantOffset = (xdma_pkg::FromRemoteGrant + 1) * (MMIOSize/4) * 1024;
-  localparam addr_t MMIOFinishOffset = (xdma_pkg::FromRemoteFinish + 1) * (MMIOSize/4) * 1024;
+  localparam addr_t MMIODataOffset = (xdma_pkg::FromRemoteData + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIOCFGOffset = (xdma_pkg::FromRemoteCfg + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIOGrantOffset = (xdma_pkg::FromRemoteGrant + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIOFinishOffset = (xdma_pkg::FromRemoteFinish + 1) * (MMIOSize / 4) * 1024;
 
   function int get_cluster_id(addr_t addr);
     return (addr - ClusterBaseAddr) >> SHIFT_BITS;
@@ -450,25 +450,25 @@ module xdma_axi_adapter_top
 '{
         idx: xdma_pkg::FromRemoteData,
         start_addr: local_end_addr - MMIODataOffset,
-        end_addr: local_end_addr - MMIODataOffset + MMIOSize * 1024
+        end_addr: local_end_addr - MMIODataOffset + (MMIOSize / 4) * 1024
     },
     xdma_pkg::rule_t
 '{
         idx: xdma_pkg::FromRemoteCfg,
         start_addr: local_end_addr - MMIOCFGOffset,
-        end_addr: local_end_addr - MMIOCFGOffset + MMIOSize * 1024
+        end_addr: local_end_addr - MMIOCFGOffset + (MMIOSize / 4) * 1024
     },
     xdma_pkg::rule_t
 '{
         idx: xdma_pkg::FromRemoteGrant,
         start_addr: local_end_addr - MMIOGrantOffset,
-        end_addr: local_end_addr - MMIOGrantOffset + MMIOSize * 1024
+        end_addr: local_end_addr - MMIOGrantOffset + (MMIOSize / 4) * 1024
     },
     xdma_pkg::rule_t
 '{
         idx: xdma_pkg::FromRemoteFinish,
         start_addr: local_end_addr - MMIOFinishOffset,
-        end_addr: local_end_addr - MMIOFinishOffset + MMIOSize * 1024
+        end_addr: local_end_addr - MMIOFinishOffset + (MMIOSize / 4) * 1024
     }
   };
   data_t from_remote_grant;
