@@ -178,10 +178,11 @@ module xdma_axi_adapter_top
   // Define Macros
   //--------------------------------------
   localparam int SHIFT_BITS = $clog2(ClusterAddressSpace);
-  localparam addr_t MMIODataOffset = (xdma_pkg::FromRemoteData + 1) * MMIOSize * 1024;
-  localparam addr_t MMIOCFGOffset = (xdma_pkg::FromRemoteCfg + 1) * MMIOSize * 1024;
-  localparam addr_t MMIOGrantOffset = (xdma_pkg::FromRemoteGrant + 1) * MMIOSize * 1024;
-  localparam addr_t MMIOFinishOffset = (xdma_pkg::FromRemoteFinish + 1) * MMIOSize * 1024;
+  localparam addr_t MMIODataOffset = (xdma_pkg::FromRemoteData + 1) * (MMIOSize/4) * 1024;
+  localparam addr_t MMIOCFGOffset = (xdma_pkg::FromRemoteCfg + 1) * (MMIOSize/4) * 1024;
+  localparam addr_t MMIOGrantOffset = (xdma_pkg::FromRemoteGrant + 1) * (MMIOSize/4) * 1024;
+  localparam addr_t MMIOFinishOffset = (xdma_pkg::FromRemoteFinish + 1) * (MMIOSize/4) * 1024;
+
   function int get_cluster_id(addr_t addr);
     return (addr - ClusterBaseAddr) >> SHIFT_BITS;
   endfunction
