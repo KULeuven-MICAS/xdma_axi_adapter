@@ -278,43 +278,5 @@ package xdma_pkg;
         logic       p_valid;
         logic       q_ready;
     } reqrsp_rsp_t;
-    //0x0000_1000 = 4096 = 4KB
-    // The base addr of the cluster is          = 0x1000_0000
-    // The cluster tcdm size is           128kB = 0x0002_0000
-    // The cluster periph size is          64kB = 0x0001_0000
-    // The addr space for the cluster is    1MB = 0x0010_0000
-    // The cluster end addr is                  = 0x1010_0000
-    // 4KB space is                             = 0x0000_1000
-    // We put the mmio at the end of the addr space
-    // Virtual TCDM   ADDR                       = 0x100F_C000 - 0x100F_D000                                        
-    // Virtual CFG    ADDR                       = 0x100F_D000 - 0x100F_E000;
-    // Virtual GRANT  ADDR                       = 0x100F_E000 - 0x100F_F000;
-    // Virtual FINISH ADDR                       = 0x100F_F000 - 0x1010_0000;  
-    localparam addr_t ClusterBaseAddr             = 'h1000_0000;
-    localparam addr_t ClusterAddressSpace         = 'h0010_0000;
-    localparam int    SHIFT_BITS                  = $clog2(ClusterAddressSpace);
-    localparam addr_t MainMemBaseAddr             = 'h8000_0000;
-    localparam addr_t MainMemEndAddr              =  48'b1 << 33;
-    localparam addr_t MMIOSize                    = 'h0000_1000;
-    localparam addr_t MMIODataOffset              =  (FromRemoteData+1  )*MMIOSize;
-    localparam addr_t MMIOCFGOffset               =  (FromRemoteCfg+1   )*MMIOSize;
-    localparam addr_t MMIOGrantOffset             =  (FromRemoteGrant+1 )*MMIOSize;
-    localparam addr_t MMIOFinishOffset            =  (FromRemoteFinish+1)*MMIOSize;
-
-    function int get_cluster_id(addr_t addr);
-        return (addr - ClusterBaseAddr) >> SHIFT_BITS;
-    endfunction
-    
-    function addr_t get_cluster_base_addr(addr_t addr);
-         int cluster_id;
-         cluster_id = get_cluster_id(addr);
-         return ClusterBaseAddr + cluster_id * ClusterAddressSpace;
-    endfunction
-
-    function addr_t get_cluster_end_addr(addr_t addr);
-         int cluster_id;
-         cluster_id = get_cluster_id(addr);
-         return ClusterBaseAddr + (cluster_id+1) * ClusterAddressSpace;
-    endfunction
 
 endpackage  

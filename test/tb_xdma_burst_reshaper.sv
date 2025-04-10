@@ -8,6 +8,8 @@ module tb_xdma_burst_reshaper();
     localparam time CyclTime = 10ns;
     localparam time ApplTime =  2ns;
     localparam time TestTime =  8ns;
+    localparam addr_t ClusterBaseAddr = 'h1000_0000;
+    localparam addr_t ClusterAddressSpace = 'h0010_0000;
     //-----------------------------------
     // Clock generator
     //-----------------------------------
@@ -73,7 +75,7 @@ endtask
 task automatic set_input();
     write_req_desc.dma_id <= #ApplTime 8'd99;
     write_req_desc.dma_type <= #ApplTime '0;
-    write_req_desc.remote_addr <= #ApplTime xdma_pkg::ClusterBaseAddr + 1 * xdma_pkg::ClusterAddressSpace;
+    write_req_desc.remote_addr <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
     write_req_desc.dma_length <= #ApplTime 'd100;
     write_req_desc.ready_to_transfer <= #ApplTime 1'b1;
     write_req_desc_ready <= #ApplTime 1'b1;
