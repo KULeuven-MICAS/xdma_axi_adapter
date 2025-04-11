@@ -22,8 +22,6 @@ module xdma_finish_manager #(
     input  logic                                 clk_i,
     /// Asynchronous reset, active low
     input  logic                                 rst_ni,
-    /// Cluster Base addr
-    input  addr_t                                cluster_base_addr_i,
     /// Status Signal
     output logic                                 xdma_finish_o,
     /// to remote
@@ -47,6 +45,8 @@ module xdma_finish_manager #(
     //     addr_t                               dst_addr;
     //     len_t                                dma_length;
     //     logic                                ready_to_transfer;
+    //     logic                                is_first;
+    //     logic                                is_last;
     // } xdma_accompany_cfg_t;   
 );
 
@@ -187,18 +187,25 @@ module xdma_finish_manager #(
   logic is_read;
   logic is_write_last;
   logic is_write_first;
+  logic is_write_middle;
   assign local_finish = (len_counter_q == '0);
-  assign is_read =        (from_remote_data_accompany_cfg_i.dst_addr == cluster_base_addr_i) && 
-                            (from_remote_data_accompany_cfg_i.dma_type == 1'b0) &&
-                            from_remote_data_accompany_cfg_i.ready_to_transfer;
+  assign is_read = (from_remote_data_accompany_cfg_i.dma_type == 1'b0) &&
+                    from_remote_data_accompany_cfg_i.ready_to_transfer;
 
-  assign is_write_first = (to_remote_data_accompany_cfg_i.src_addr == cluster_base_addr_i) && 
-                            (to_remote_data_accompany_cfg_i.dma_type == 1'b1) &&
-                            to_remote_data_accompany_cfg_i.ready_to_transfer;
+  assign is_write_first = (to_remote_data_accompany_cfg_i.dma_type == 1'b1) &&
+                         (to_remote_data_accompany_cfg_i.is_first_cw) &&
+                         (!to_remote_data_accompany_cfg_i.is_last_cw) &&
+                          to_remote_data_accompany_cfg_i.ready_to_transfer;
 
-  assign is_write_last = (from_remote_data_accompany_cfg_i.dst_addr == cluster_base_addr_i) && 
-                           (from_remote_data_accompany_cfg_i.dma_type == 1'b1) &&
-                           from_remote_data_accompany_cfg_i.ready_to_transfer;
+  assign is_write_middle = (from_remote_data_accompany_cfg_i.dma_type == 1'b1) &&
+                         (!from_remote_data_accompany_cfg_i.is_first_cw) &&
+                         (!from_remote_data_accompany_cfg_i.is_last_cw) &&
+                          from_remote_data_accompany_cfg_i.ready_to_transfer;
+
+  assign is_write_last = (from_remote_data_accompany_cfg_i.dma_type == 1'b1) &&
+                         (!from_remote_data_accompany_cfg_i.is_first_cw) &&
+                         (from_remote_data_accompany_cfg_i.is_last_cw) &&
+                          from_remote_data_accompany_cfg_i.ready_to_transfer;
 
   logic valid_to_send_finish;
 
@@ -210,15 +217,12 @@ module xdma_finish_manager #(
       IDLE: begin
         if (is_read) next_state = READ_BUSY;
         if (is_write_first) next_state = WRITE_FIRST_BUSY;
+        if (is_write_middle) next_state = WRITE_MIDDLE_BUSY;
         if (is_write_last) next_state = WRITE_LAST_BUSY;
       end
       READ_BUSY: if (local_finish) next_state = FINISH;
-
       WRITE_FIRST_BUSY: if (remote_finish) next_state = FINISH;
-      WRITE_LAST_BUSY: begin
-        if (to_remote_data_accompany_cfg_i.ready_to_transfer) next_state = WRITE_MIDDLE_BUSY;
-        if (local_finish) next_state = SEND_FINISH_TO_PREV_HOP;
-      end
+      WRITE_LAST_BUSY: if (local_finish) next_state = SEND_FINISH_TO_PREV_HOP;
       WRITE_MIDDLE_BUSY: if (remote_finish) next_state = SEND_FINISH_TO_PREV_HOP;
       SEND_FINISH_TO_PREV_HOP:
       if (to_remote_finish_valid_o && to_remote_finish_ready_i) next_state = FINISH;
