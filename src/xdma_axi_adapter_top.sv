@@ -565,7 +565,6 @@ module xdma_axi_adapter_top
   ) i_xdma_finish_manager (
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),
-      .cluster_base_addr_i             (cluster_base_addr_i),
       .xdma_finish_o                   (xdma_finish_o),
       .to_remote_data_accompany_cfg_i  (to_remote_data_accompany_cfg_i),
       .from_remote_data_happening_i    (from_remote_data_happening),

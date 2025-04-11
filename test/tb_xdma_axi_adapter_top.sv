@@ -349,6 +349,8 @@ module tb_xdma_axi_adapter_top ();
     xdma_from_remote_data_accompany_cfg[0].dst_addr <= #ApplTime ClusterBaseAddr;
     xdma_from_remote_data_accompany_cfg[0].dma_length <= #ApplTime 100;
     xdma_from_remote_data_accompany_cfg[0].ready_to_transfer <= #ApplTime 1;
+    xdma_from_remote_data_accompany_cfg[0].is_first_cw <= #ApplTime 0;
+    xdma_from_remote_data_accompany_cfg[0].is_last_cw <= #ApplTime 0;
     $display("End Send CFG");
   endtask
 
@@ -366,6 +368,8 @@ module tb_xdma_axi_adapter_top ();
     xdma_to_remote_data_accompany_cfg[1].src_addr <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
     xdma_to_remote_data_accompany_cfg[1].dst_addr <= #ApplTime ClusterBaseAddr;
     xdma_to_remote_data_accompany_cfg[1].ready_to_transfer <= #ApplTime 1'b1;
+    xdma_to_remote_data_accompany_cfg[1].is_first_cw <= #ApplTime 1'b0;
+    xdma_to_remote_data_accompany_cfg[1].is_last_cw <= #ApplTime 1'b0;
     // standard axi handshake for
     for (int i = 1; i <= dma_length; i++) begin
       rand_wait(0, 5);
@@ -432,7 +436,8 @@ module tb_xdma_axi_adapter_top ();
     xdma_from_remote_data_accompany_cfg[1].src_addr <= #ApplTime ClusterBaseAddr;
     xdma_from_remote_data_accompany_cfg[1].dst_addr <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
     xdma_from_remote_data_accompany_cfg[1].ready_to_transfer <= #ApplTime 1'b1;
-
+    xdma_from_remote_data_accompany_cfg[1].is_first_cw <= #ApplTime 1'b0;
+    xdma_from_remote_data_accompany_cfg[1].is_last_cw <= #ApplTime 1'b1;
 
 
     xdma_to_remote_data_accompany_cfg[0].dma_id <= #ApplTime 8'd88;
@@ -441,6 +446,8 @@ module tb_xdma_axi_adapter_top ();
     xdma_to_remote_data_accompany_cfg[0].src_addr <= #ApplTime ClusterBaseAddr;
     xdma_to_remote_data_accompany_cfg[0].dst_addr <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
     xdma_to_remote_data_accompany_cfg[0].ready_to_transfer <= #ApplTime 1'b1;
+    xdma_to_remote_data_accompany_cfg[0].is_first_cw <= #ApplTime 1'b1;
+    xdma_to_remote_data_accompany_cfg[0].is_last_cw <= #ApplTime 1'b0;
     // standard axi handshake for
     for (int i = 1; i <= dma_length; i++) begin
       $display("Send Data idx = %d", i);
