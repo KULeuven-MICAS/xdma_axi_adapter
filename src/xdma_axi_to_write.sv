@@ -111,11 +111,7 @@ module xdma_axi_to_write #(
   always_comb begin : proc_ar_compose
     axi_rsp_o.ar_ready = '0;
   end
-  // We do not need any b channel
-  always_comb begin : proc_b_compose
-    axi_rsp_o.b = '0;
-    axi_rsp_o.b_valid = '0;
-  end
+
   // We do not need any r channel
   always_comb begin : proc_r_compose
     axi_rsp_o.r = '0;
@@ -130,5 +126,46 @@ module xdma_axi_to_write #(
       wr_meta_q <= wr_meta_d;
       w_cnt_q   <= w_cnt_d;
     end
+  end
+
+  // Simple B Response
+  // After we get the w last signal we send a B
+  // The state enum
+  logic b_valid;
+  typedef enum logic [1:0] {
+    IDLE,
+    B_SEND_VALID
+  } state_t;  
+  state_t cur_state, next_state;
+  // State Update
+  always_ff @(posedge clk_i, negedge rst_ni) begin
+    if (!rst_ni) begin
+      cur_state <= IDLE;
+    end else begin
+      cur_state <= next_state;
+    end
+  end
+  // Next state logic
+  always_comb begin
+    next_state = cur_state;
+    case (cur_state)
+      // Any of the valid is high, the next state is busy
+      IDLE: if (wr_meta_d.last && wr_valid) next_state = B_SEND_VALID;
+      B_SEND_VALID: if (axi_req_i.b_ready) next_state = IDLE;
+    endcase
+  end
+  // Output logic
+  always_comb begin
+    b_valid = 1'b0;
+    case (cur_state)
+      IDLE: b_valid = 1'b0;
+      B_SEND_VALID: b_valid = 1'b1;
+    endcase
+  end
+  always_comb begin : proc_b_compose
+    axi_rsp_o.b = '0;
+    axi_rsp_o.b.id = wr_meta_q.id;
+    axi_rsp_o.b.resp = 2'b00; // RESP_OK
+    axi_rsp_o.b_valid = b_valid;
   end
 endmodule
