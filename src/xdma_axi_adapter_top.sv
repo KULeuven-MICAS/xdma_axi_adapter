@@ -542,7 +542,7 @@ module xdma_axi_adapter_top
       .data_o    (receive_grant_cur),
       .pop_i     (grant_fifo_pop)
   );
-  assign grant = !grant_fifo_empty & (receive_grant_cur.dma_id == cur_dma_id);
+  assign grant = !grant_fifo_empty;
   assign grant_fifo_pop = !grant_fifo_empty & write_req_done;
   assign from_remote_grant_ready = !grant_fifo_full;
   assign grant_fifo_push = from_remote_grant_valid & !grant_fifo_full;
