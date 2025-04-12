@@ -229,7 +229,7 @@ module xdma_req_backend #(
     axi_dma_req_o.aw.size  = current_req_aw_desc.size;
     axi_dma_req_o.aw.burst = current_req_aw_desc.burst;
     axi_dma_req_o.aw.cache = current_req_aw_desc.cache;
-    axi_dma_req_o.aw_valid = ~aw_emitter_empty;
+    axi_dma_req_o.aw_valid = (current_req_aw_desc.is_write_data)? ~aw_emitter_empty && write_req_grant_i : ~aw_emitter_empty;
     aw_emitter_pop         = axi_dma_resp_i.aw_ready & axi_dma_req_o.aw_valid;
     // B signals
     // we are always ready to accept b signals, as we do not need them

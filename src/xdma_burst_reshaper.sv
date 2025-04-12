@@ -83,22 +83,6 @@ module xdma_burst_reshaper #(
       .q_o       (lens_counter_q),
       .overflow_o()
   );
-  // addr_t remote_addr_q;
-  // delta_counter #(
-  //     .WIDTH($bits(addr_t))
-  // ) i_addr_counter(
-  //     .clk_i     (clk_i            ),
-  //     .rst_ni    (rst_ni           ),
-  //     .clear_i   (counter_clear    ),
-  //     .en_i      (counter_en       ),
-  //     .load_i    (counter_load     ),
-  //     .down_i    (1'b0             ),
-  //     .delta_i   (PageSize         ),
-  //     .d_i       (write_req_desc_i.remote_addr),
-  //     .q_o       (remote_addr_q    ),
-  //     .overflow_o()
-  // );
-
 
   logic finish;
   assign finish = (lens_counter_q <= MaxNumBeats) & write_req_desc_ready_i;
@@ -161,6 +145,8 @@ module xdma_burst_reshaper #(
   end
 
   logic [7:0] num_beats;
+  logic is_write_data;
+  assign is_write_data =  (write_req_idx_i==xdma_pkg::ToRemoteData) && (write_req_desc_i.dma_type);
   assign num_beats = (lens_counter_q >= MaxNumBeats) ? MaxNumBeats : lens_counter_q;
   always_comb begin : proc_pack_write_req
     //-----------------------
@@ -172,12 +158,13 @@ module xdma_burst_reshaper #(
     write_req_aw_desc_o.size = 3'b110;  // 64B //TODO: Should compute from a function
     write_req_aw_desc_o.burst = 2'b01;  // BURST TYPE
     write_req_aw_desc_o.cache = 3'b0;
+    write_req_aw_desc_o.is_write_data = is_write_data;
     //-----------------------
     // Create the W request
     //-----------------------
     write_req_w_desc_o.num_beats = num_beats;
     write_req_w_desc_o.is_single = (num_beats == 8'd1);
-    write_req_w_desc_o.is_write_data = (write_req_idx_i==xdma_pkg::ToRemoteData) && (write_req_desc_i.dma_type);
+    write_req_w_desc_o.is_write_data = is_write_data;
   end
 
 
