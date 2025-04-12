@@ -49,7 +49,6 @@ module xdma_data_path #(
 );
 
   logic counter_en;
-  logic counter_clear;
   logic counter_load;
   logic [7:0] beats_counter_q;
   counter #(
@@ -57,7 +56,7 @@ module xdma_data_path #(
   ) i_lens_counter (
       .clk_i     (clk_i),
       .rst_ni    (rst_ni),
-      .clear_i   (counter_clear),
+      .clear_i   ('0),
       .en_i      (counter_en),
       .load_i    (counter_load),
       .down_i    (1'b1),
@@ -66,10 +65,9 @@ module xdma_data_path #(
       .overflow_o()
   );
 
-  typedef enum logic [1:0] {
+  typedef enum logic [0:0] {
     IDLE,
-    BUSY,
-    FINISH
+    BUSY
   } state_t;
   state_t cur_state, next_state;
 
@@ -82,18 +80,9 @@ module xdma_data_path #(
     end
   end
 
-  // Next state logic
-  always_comb begin : proc_next_state_logic
-    next_state = cur_state;
-    case (cur_state)
-      IDLE:   if (w_dp_valid_i) next_state = BUSY;
-      BUSY:   if (beats_counter_q == '1) next_state = FINISH;
-      FINISH: next_state = IDLE;
-    endcase
-  end
-
-  // Output logic
+  // Output + Next State logic
   always_comb begin : proc_output_logic
+    next_state = cur_state;
     w_data_o = 1'b0;
     w_strb_o = 1'b0;
     w_last_o = 1'b0;
@@ -101,45 +90,31 @@ module xdma_data_path #(
     w_dp_ready_o = 1'b0;
     write_req_data_ready_o = 1'b0;
     counter_en = 1'b0;
-    counter_clear = 1'b0;
     counter_load = 1'b0;
 
     case (cur_state)
       IDLE: begin
         // Wait the w desc is valid
-        w_data_o = 1'b0;
-        w_strb_o = 1'b0;
-        w_last_o = 1'b0;
-        w_valid_o = 1'b0;
-        w_dp_ready_o = 1'b0;
-        counter_en = 1'b0;
-        counter_clear = 1'b0;
-        if (w_dp_valid_i) counter_load = 1'b1;
-        write_req_data_ready_o = 1'b0;
-
+        if (w_dp_valid_i) begin
+          next_state   = BUSY;
+          counter_load = 1'b1;
+        end
       end
       BUSY: begin
         w_data_o = write_req_data_i;
         w_strb_o = '1;
         w_last_o = (beats_counter_q == 1);
         w_valid_o = (w_desc_i.is_write_data)? (write_req_grant_i && write_req_data_valid_i) : write_req_data_valid_i;
-        w_dp_ready_o = 1'b0;
         write_req_data_ready_o = (w_desc_i.is_write_data)? (write_req_grant_i && w_ready_i) : w_ready_i;
         counter_en = w_valid_o && w_ready_i;
-        counter_clear = 1'b0;
-        counter_load = 1'b0;
-
+        if (beats_counter_q == 1 && w_valid_o && w_ready_i) begin
+          next_state = IDLE;
+          w_last_o = 1'b1;
+          w_dp_ready_o = 1'b1;
+        end
       end
-      FINISH: begin
-        w_data_o = 1'b0;
-        w_strb_o = 1'b0;
-        w_last_o = 1'b0;
-        w_valid_o = 1'b0;
-        w_dp_ready_o = 1'b1;
-        write_req_data_ready_o = 1'b0;
-        counter_en = 1'b0;
-        counter_clear = 1'b1;
-        counter_load = 1'b0;
+      default: begin
+        next_state = IDLE;
       end
     endcase
   end
@@ -153,7 +128,7 @@ module xdma_data_path #(
   // always_comb begin : proc_write_control
   //   // counter
   //   w_num_beats_d   = w_num_beats_q;
-  //   w_cnt_valid_d   = w_cnt_valid_q;    
+  //   w_cnt_valid_d   = w_cnt_valid_q;
   //   // bus signals
   //   w_valid_o       = write_req_data_valid_i & w_dp_valid_i;
   //   w_data_o        = write_req_data_i;
