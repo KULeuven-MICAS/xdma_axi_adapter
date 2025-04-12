@@ -87,7 +87,7 @@ module xdma_data_path #(
     next_state = cur_state;
     case (cur_state)
       IDLE:   if (w_dp_valid_i) next_state = BUSY;
-      BUSY:   if (beats_counter_q == '0) next_state = FINISH;
+      BUSY:   if (beats_counter_q == '1) next_state = FINISH;
       FINISH: next_state = IDLE;
     endcase
   end
@@ -121,7 +121,7 @@ module xdma_data_path #(
       BUSY: begin
         w_data_o = write_req_data_i;
         w_strb_o = '1;
-        w_last_o = (beats_counter_q == 0);
+        w_last_o = (beats_counter_q == 1);
         w_valid_o = (w_desc_i.is_write_data)? (write_req_grant_i && write_req_data_valid_i) : write_req_data_valid_i;
         w_dp_ready_o = 1'b0;
         write_req_data_ready_o = (w_desc_i.is_write_data)? (write_req_grant_i && w_ready_i) : w_ready_i;
