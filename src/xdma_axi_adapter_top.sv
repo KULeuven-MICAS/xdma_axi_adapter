@@ -272,23 +272,7 @@ module xdma_axi_adapter_top
 
   end
 
-  //--------------------------------------
-  // Grant Manager
-  //--------------------------------------
-  always_comb begin
-    to_remote_grant.dma_id = from_remote_data_accompany_cfg_i.dma_id;
-    to_remote_grant.from = from_remote_data_accompany_cfg_i.src_addr;
-    to_remote_grant.reserved = '0;
-  end
-  xdma_grant_manager #(
-      .xdma_from_remote_data_accompany_cfg_t(xdma_from_remote_data_accompany_cfg_t)
-  ) i_xdma_grant_manager (
-      .clk_i                                (clk_i),
-      .rst_ni                               (rst_ni),
-      .xdma_from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg_i),
-      .xdma_to_remote_grant_valid_o         (to_remote_grant_valid),
-      .xdma_to_remote_grant_ready_i         (to_remote_grant_ready)
-  );
+
 
   //--------------------------------------
   // Req Manager
@@ -403,6 +387,24 @@ module xdma_axi_adapter_top
       .cur_dma_id_o     (cur_dma_id),
       // From AXI handshake
       .write_happening_i(write_happening)
+  );
+  //--------------------------------------
+  // Grant Manager
+  //--------------------------------------
+  always_comb begin
+    to_remote_grant.dma_id = from_remote_data_accompany_cfg_i.dma_id;
+    to_remote_grant.from = from_remote_data_accompany_cfg_i.src_addr;
+    to_remote_grant.reserved = '0;
+  end
+  xdma_grant_manager #(
+      .xdma_from_remote_data_accompany_cfg_t(xdma_from_remote_data_accompany_cfg_t)
+  ) i_xdma_grant_manager (
+      .clk_i                           (clk_i),
+      .rst_ni                          (rst_ni),
+      .from_remote_grant_i             (grant),
+      .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg_i),
+      .to_remote_grant_valid_o         (to_remote_grant_valid),
+      .to_remote_grant_ready_i         (to_remote_grant_ready)
   );
   //--------------------------------------
   // Receiver front end
