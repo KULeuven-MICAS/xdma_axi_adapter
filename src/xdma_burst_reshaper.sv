@@ -101,7 +101,7 @@ module xdma_burst_reshaper #(
 
 
   logic finish;
-  assign finish = (lens_counter_q < MaxNumBeats) & write_req_desc_ready_i;
+  assign finish = (lens_counter_q <= MaxNumBeats) & write_req_desc_ready_i;
   // The state enum
   typedef enum logic [1:0] {
     IDLE,
