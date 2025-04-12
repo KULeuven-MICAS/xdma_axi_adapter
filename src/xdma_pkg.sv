@@ -172,6 +172,7 @@ package xdma_pkg;
     logic [2:0] size;
     logic [1:0] burst;
     logic [3:0] cache;
+    logic       is_write_data;
   } xdma_req_aw_desc_t;
 
   //--------------------------------------
