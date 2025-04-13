@@ -72,8 +72,6 @@ module xdma_finish_manager #(
     end
   end
 
-
-
   //-------------------------------------
   // FF to hold from remote dma id and addr
   //-------------------------------------
@@ -97,6 +95,7 @@ module xdma_finish_manager #(
       end
     end
   end
+
   //-------------------------------------
   // FF to hold from to remote data dma_id
   //-------------------------------------    
@@ -114,7 +113,6 @@ module xdma_finish_manager #(
       end
     end
   end
-
 
   //-------------------------------------
   // Receive FINISH FIFO
@@ -160,10 +158,6 @@ module xdma_finish_manager #(
   assign from_remote_finish_ready_o = !finish_fifo_full;
   assign finish_fifo_push = from_remote_finish_valid_i && !finish_fifo_full;
 
-
-
-
-
   logic len_counter_en;
   logic len_counter_clear;
   logic len_counter_load;
@@ -183,12 +177,18 @@ module xdma_finish_manager #(
       .q_o       (len_counter_q),
       .overflow_o()
   );
-  logic local_finish;
+
   logic is_read;
   logic is_write_last;
   logic is_write_first;
   logic is_write_middle;
-  assign local_finish = (len_counter_q == '0);
+
+  logic local_read_finish;
+  assign local_read_finish = (len_counter_q == '0) && (!from_remote_data_accompany_cfg_i.ready_to_transfer);
+
+  logic local_write_finish;
+  assign local_write_finish = (len_counter_q == '0) && (!to_remote_data_accompany_cfg_i.ready_to_transfer);
+
   assign is_read = (from_remote_data_accompany_cfg_i.dma_type == 1'b0) &&
                     from_remote_data_accompany_cfg_i.ready_to_transfer;
 
@@ -220,9 +220,9 @@ module xdma_finish_manager #(
         if (is_write_middle) next_state = WRITE_MIDDLE_BUSY;
         if (is_write_last) next_state = WRITE_LAST_BUSY;
       end
-      READ_BUSY: if (local_finish) next_state = FINISH;
+      READ_BUSY: if (local_read_finish) next_state = FINISH;
       WRITE_FIRST_BUSY: if (remote_finish) next_state = FINISH;
-      WRITE_LAST_BUSY: if (local_finish) next_state = SEND_FINISH_TO_PREV_HOP;
+      WRITE_LAST_BUSY: if (local_write_finish) next_state = SEND_FINISH_TO_PREV_HOP;
       WRITE_MIDDLE_BUSY: if (remote_finish) next_state = SEND_FINISH_TO_PREV_HOP;
       SEND_FINISH_TO_PREV_HOP:
       if (to_remote_finish_valid_o && to_remote_finish_ready_i) next_state = FINISH;
