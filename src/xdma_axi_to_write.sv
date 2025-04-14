@@ -132,10 +132,10 @@ module xdma_axi_to_write #(
   // After we get the w last signal we send a B
   // The state enum
   logic b_valid;
-  typedef enum logic [1:0] {
+  typedef enum logic [0:0] {
     IDLE,
     B_SEND_VALID
-  } state_t;  
+  } state_t;
   state_t cur_state, next_state;
   // State Update
   always_ff @(posedge clk_i, negedge rst_ni) begin
@@ -150,7 +150,7 @@ module xdma_axi_to_write #(
     next_state = cur_state;
     case (cur_state)
       // Any of the valid is high, the next state is busy
-      IDLE: if (wr_meta_d.last && wr_valid) next_state = B_SEND_VALID;
+      IDLE: if (wr_meta_d.last && wr_valid && wr_ready) next_state = B_SEND_VALID;
       B_SEND_VALID: if (axi_req_i.b_ready) next_state = IDLE;
     endcase
   end
@@ -165,7 +165,7 @@ module xdma_axi_to_write #(
   always_comb begin : proc_b_compose
     axi_rsp_o.b = '0;
     axi_rsp_o.b.id = wr_meta_q.id;
-    axi_rsp_o.b.resp = 2'b00; // RESP_OK
+    axi_rsp_o.b.resp = 2'b00;  // RESP_OK
     axi_rsp_o.b_valid = b_valid;
   end
 endmodule
