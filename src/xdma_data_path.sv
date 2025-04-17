@@ -47,7 +47,7 @@ module xdma_data_path #(
     //  2.Wait the remote sends the data
     input  logic             write_req_grant_i
 );
-
+  logic counter_clear;
   logic counter_en;
   logic counter_load;
   logic [7:0] beats_counter_q;
@@ -56,11 +56,11 @@ module xdma_data_path #(
   ) i_lens_counter (
       .clk_i     (clk_i),
       .rst_ni    (rst_ni),
-      .clear_i   ('0),
+      .clear_i   (counter_clear),
       .en_i      (counter_en),
       .load_i    (counter_load),
-      .down_i    (1'b1),
-      .d_i       (w_desc_i.num_beats),
+      .down_i    (1'b0),
+      .d_i       ('0),
       .q_o       (beats_counter_q),
       .overflow_o()
   );
@@ -88,6 +88,7 @@ module xdma_data_path #(
     w_last_o = 1'b0;
     w_valid_o = 1'b0;
     w_dp_ready_o = 1'b0;
+    counter_clear = 1'b0;
     write_req_data_ready_o = 1'b0;
     counter_en = 1'b0;
     counter_load = 1'b0;
@@ -103,15 +104,16 @@ module xdma_data_path #(
       BUSY: begin
         w_data_o = write_req_data_i;
         w_strb_o = '1;
-        w_last_o = (beats_counter_q == 1);
         w_valid_o = (w_desc_i.is_write_data)? (write_req_grant_i && write_req_data_valid_i) : write_req_data_valid_i;
         write_req_data_ready_o = (w_desc_i.is_write_data)? (write_req_grant_i && w_ready_i) : w_ready_i;
         counter_en = w_valid_o && w_ready_i;
-        if (beats_counter_q == 1 && w_valid_o && w_ready_i) begin
-          next_state = IDLE;
+        counter_load = 1'b0;
+        if ((beats_counter_q == w_desc_i.num_beats-1) && w_valid_o && w_ready_i) begin
+          counter_clear = 1'b1;
           w_last_o = 1'b1;
           w_dp_ready_o = 1'b1;
         end
+        if(!w_dp_valid_i) next_state = IDLE;
       end
       default: begin
         next_state = IDLE;
