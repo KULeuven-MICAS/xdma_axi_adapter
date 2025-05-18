@@ -33,6 +33,7 @@ package xdma_pkg;
   localparam int unsigned FirstFrameRemaingPayloadWidth = AxiDataWidth - 1 - TotalFrameWidth - DMAIdWidth - AddrWidth - AddrWidth;
   typedef logic [FirstFrameRemaingPayloadWidth-1:0] first_frame_remaining_payload_t;
   localparam int unsigned RemainingPayloadWidth = AxiDataWidth - 1 - TotalFrameWidth;
+  typedef logic [RemainingPayloadWidth-1:0] remaining_payload_t;
 
   //--------------------------------------
   // to remote cfg type
