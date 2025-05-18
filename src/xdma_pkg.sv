@@ -5,6 +5,7 @@
 //! XDMA Package
 /// Contains all necessary type definitions, constants, and generally useful functions.
 package xdma_pkg;
+  localparam int unsigned DMAIdWidth = 32'd4;
   localparam int unsigned AxiDataWidth = 32'd512;
   localparam int unsigned StrbWidth = AxiDataWidth / 8;
   localparam int unsigned AddrWidth = 32'd48;
@@ -15,6 +16,7 @@ package xdma_pkg;
   localparam int unsigned DMALengthWidth = 32'd19;
   // localparam int unsigned NrBroadcast  = 32'd4;
   // localparam int unsigned NrDimension = 32'd6;
+  typedef logic [DMAIdWidth-1:0] id_t;
   typedef logic [AxiDataWidth-1:0] data_t;
   typedef logic [StrbWidth-1:0] strb_t;
   typedef logic [AddrWidth-1:0] addr_t;
@@ -26,11 +28,8 @@ package xdma_pkg;
   typedef logic [AxiDataWidth-DMAIdWidth-AddrWidth-1:0] grant_reserved_t;
   typedef logic [AxiDataWidth-DMAIdWidth-AddrWidth-1:0] finish_reserved_t;
 
-
   localparam int unsigned TotalFrameWidth = 32'd4;
   typedef logic [TotalFrameWidth-1:0] frame_length_t;
-  localparam int unsigned DMAIdWidth = 32'd4;
-  typedef logic [DMAIdWidth-1:0] id_t;
   localparam int unsigned FirstFrameRemaingPayloadWidth = AxiDataWidth - 1 - TotalFrameWidth - DMAIdWidth - AddrWidth - AddrWidth;
   typedef logic [FirstFrameRemaingPayloadWidth-1:0] first_frame_remaining_payload_t;
   localparam int unsigned RemainingPayloadWidth = AxiDataWidth - 1 - TotalFrameWidth;
