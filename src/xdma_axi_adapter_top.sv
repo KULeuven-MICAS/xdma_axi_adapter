@@ -16,64 +16,46 @@ module xdma_axi_adapter_top
   import xdma_pkg::*;
 #(
     // AXI types
-    parameter type axi_id_t                            = logic,
-    parameter type axi_out_req_t                       = logic,
-    parameter type axi_out_resp_t                      = logic,
-    parameter type axi_in_req_t                        = logic,
-    parameter type axi_in_resp_t                       = logic,
+    parameter type axi_id_t             = logic,
+    parameter type axi_out_req_t        = logic,
+    parameter type axi_out_resp_t       = logic,
+    parameter type axi_in_req_t         = logic,
+    parameter type axi_in_resp_t        = logic,
     // Reqrsp types
-    parameter type reqrsp_req_t                        = logic,
-    parameter type reqrsp_rsp_t                        = logic,
+    parameter type reqrsp_req_t         = logic,
+    parameter type reqrsp_rsp_t         = logic,
     // Data types
-    parameter type data_t                              = logic,
-    parameter type strb_t                              = logic,
-    parameter type addr_t                              = logic,
+    parameter type data_t               = logic,
+    parameter type strb_t               = logic,
+    parameter type addr_t               = logic,
     // XDMA type
     // Total dma length type
-    parameter type len_t                               = logic,
+    parameter type len_t                = logic,
     // Sender side
-    parameter type xdma_to_remote_cfg_t                = logic,
+    parameter type xdma_to_remote_cfg_t = logic,
     // typedef struct packed {
-    //     id_t                                     dma_id; 
-    //     // The dma_type
-    //     // 0: read
-    //     // 1: write
-    //     logic                                    dma_type;
-    //     // The reader addr indicates the source of data
-    //     addr_t                                   reader_addr;
-    //     xdma_inter_cluster_cfg_broadcast_t       writer_addr;
-    //     stride_t                                 spatial_stride;
-    //     xdma_inter_cluster_cfg_temporal_bound_t  temporal_bound;
-    //     xdma_inter_cluster_cfg_temporal_stride_t temporal_stride;
-    //     enable_channel_t                         enable_channel;
-    //     enable_byte_t                            enable_byte;
-    // } xdma_inter_cluster_cfg__t;
-    /// - dma_id:
-    /// - dma_type:
-    /// - reader_addr:
-    /// - writer_addr:
-    /// - spatial_stride:
-    /// - temporal_bound:
-    /// - temporal_stride:
-    /// - enable_channel:
-    /// - enable_byte:
+    //   first_frame_remaining_payload_t first_frame_remaining_payload;
+    //   addr_t                          writer_addr;
+    //   addr_t                          reader_addr;
+
+    //   id_t           dma_id;
+    //   frame_length_t frame_length;
+    //   // The dma_type
+    //   // 0: read
+    //   // 1: write
+    //   logic          dma_type;
+    // } xdma_inter_cluster_first_cfg_t;
     parameter type xdma_to_remote_data_t               = logic,
     /// The data is logic [DataWidth-1:0]
     parameter type xdma_to_remote_data_accompany_cfg_t = logic,
     /// typedef struct packed {
-    ///     id_t                                 dma_id; 
+    ///     id_t                                 dma_id;
     ///     logic                                dma_type;
     ///     addr_t                               src_addr;
     ///     addr_t                               dst_addr;
     ///     len_t                                dma_length;
     ///     logic                                ready_to_transfer;
     /// } xdma_accompany_cfg_t;
-    /// - dma_id:
-    /// - dma_type:
-    /// - src_addr:
-    /// - dst_addr:
-    /// - dma_length:
-    /// - ready_to_transfer:
     parameter type xdma_req_desc_t                     = logic,
 
     /// typedef struct packed {
@@ -83,39 +65,36 @@ module xdma_axi_adapter_top
     ///     len_t                                dma_length;
     ///     logic                                ready_to_transfer;
     /// } xdma_req_desc_t;
-    parameter type xdma_req_meta_t                       = logic,
+    parameter type xdma_req_meta_t          = logic,
     /// typedef struct packed {
     ///     id_t                                 dma_id;
     ///     len_t                                dma_length;
     /// } xdma_req_meta_t;       
-    parameter type xdma_to_remote_grant_t                = logic,
+    parameter type xdma_to_remote_grant_t   = logic,
     // typedef struct packed {
     //     id_t                                 dma_id;
     //     addr_t                               from;
     //     grant_reserved_t                     reserved;
     // } xdma_to_remote_grant_t;
     // Receiver side
-    parameter type xdma_from_remote_grant_t              = logic,
+    parameter type xdma_from_remote_grant_t = logic,
     // typedef struct packed {
     //     id_t                                 dma_id;
     //     addr_t                               from;
-    // } xdma_from_remote_grant_t;    
-    parameter type xdma_from_remote_cfg_t                = logic,
+    // } xdma_from_remote_grant_t;
+    parameter type xdma_from_remote_cfg_t   = logic,
     // typedef struct packed {
-    //     id_t                                     dma_id; 
-    //     // The dma_type
-    //     // 0: read
-    //     // 1: write
-    //     logic                                    dma_type;
-    //     // The reader addr indicates the source of data
-    //     addr_t                                   reader_addr;
-    //     xdma_inter_cluster_cfg_broadcast_t       writer_addr;
-    //     stride_t                                 spatial_stride;
-    //     xdma_inter_cluster_cfg_temporal_bound_t  temporal_bound;
-    //     xdma_inter_cluster_cfg_temporal_stride_t temporal_stride;
-    //     enable_channel_t                         enable_channel;
-    //     enable_byte_t                            enable_byte;
-    // } xdma_inter_cluster_cfg__t;
+    //   first_frame_remaining_payload_t first_frame_remaining_payload;
+    //   addr_t                          writer_addr;
+    //   addr_t                          reader_addr;
+
+    //   id_t           dma_id;
+    //   frame_length_t frame_length;
+    //   // The dma_type
+    //   // 0: read
+    //   // 1: write
+    //   logic          dma_type;
+    // } xdma_inter_cluster_first_cfg_t;
     parameter type xdma_from_remote_data_t               = logic,
     /// The data is logic [DataWidth-1:0]
     parameter type xdma_from_remote_data_accompany_cfg_t = logic,
@@ -126,7 +105,7 @@ module xdma_axi_adapter_top
     //     addr_t                               dst_addr;
     //     len_t                                dma_length;
     //     logic                                ready_to_transfer;
-    // } xdma_accompany_cfg_t;    
+    // } xdma_accompany_cfg_t;
 
     // Cluster Cfgs
     parameter addr_t ClusterBaseAddr     = 'h1000_0000,
@@ -212,6 +191,8 @@ module xdma_axi_adapter_top
   // Descriptions
   xdma_req_desc_t
       to_remote_cfg_desc, to_remote_data_desc, to_remote_grant_desc, to_remote_finish_desc;
+  // CFG ready to transfer signal
+  logic cfg_ready_to_transfer;
   always_comb begin : proc_unpack_desc
     //--------------------------------------
     // to remote cfg desc
@@ -228,13 +209,13 @@ module xdma_axi_adapter_top
     to_remote_cfg_desc.remote_addr         = (to_remote_cfg_desc.dma_type == 1'b0)
                                                ? (to_remote_cfg_i.reader_addr >= MainMemBaseAddr) ? MainMemEndAddr-MMIOCFGOffset : get_cluster_end_addr(
         to_remote_cfg_i.reader_addr) - MMIOCFGOffset :
-        (to_remote_cfg_i.writer_addr.write_addr_0 >= MainMemBaseAddr) ?
-        MainMemEndAddr - MMIOCFGOffset :
-        get_cluster_end_addr(to_remote_cfg_i.writer_addr.write_addr_0) - MMIOCFGOffset;
-    // Now we assume there are only one 512bit cfg
-    to_remote_cfg_desc.dma_length = 1;
-    // Ready to transfer
-    to_remote_cfg_desc.ready_to_transfer = to_remote_cfg_valid_i;
+        (to_remote_cfg_i.writer_addr >= MainMemBaseAddr) ? MainMemEndAddr - MMIOCFGOffset :
+        get_cluster_end_addr(to_remote_cfg_i.writer_addr) - MMIOCFGOffset;
+    // The cfg length is stored in the first frame.
+    to_remote_cfg_desc.dma_length = to_remote_cfg_i.frame_length;
+    // Ready to transfer logic: Is a FSM that counts the frames to determine the frame header
+    // FSM will control cfg_ready_to_transfer signal when the first frame is there
+    to_remote_cfg_desc.ready_to_transfer = cfg_ready_to_transfer;
 
     //--------------------------------------
     // to remote data desc
@@ -272,7 +253,76 @@ module xdma_axi_adapter_top
 
   end
 
+  // FSM to control the cfg_ready_to_transfer signal
+  typedef enum int unsigned {
+    sIDLE = 0,
+    sSendFrameBody = 1
+  } state_cfg_ready_to_transfer_t;
 
+  // Declaration of the FSM's current and next state
+  state_cfg_ready_to_transfer_t cur_state_cfg_ready_to_transfer, next_state_ready_to_transfer;
+
+  // Declaration of the counter reg that count the current cfg frame number
+  frame_length_t frame_length_counter;
+  logic frame_length_counter_enable, frame_length_counter_clear;
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      frame_length_counter <= '0;
+    end else if (frame_length_counter_clear) begin
+      frame_length_counter <= '0;
+    end else if (frame_length_counter_enable) begin
+      frame_length_counter <= frame_length_counter + 1;
+    end
+  end
+
+  // Declaration of the holder reg that hold the cfg total length
+  frame_length_t frame_length_holder;
+  logic frame_length_holder_enable;
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      frame_length_holder <= '0;
+    end else if (frame_length_holder_enable) begin
+      frame_length_holder <= to_remote_cfg_desc.dma_length;
+    end
+  end
+
+  // Current State Logic
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      cur_state_cfg_ready_to_transfer <= sIDLE;
+    end else begin
+      cur_state_cfg_ready_to_transfer <= next_state_ready_to_transfer;
+    end
+  end
+
+  // Next State Logic
+  always_comb begin : proc_next_state_logic
+    cfg_ready_to_transfer = 1'b0;
+    frame_length_counter_clear = 1'b0;
+    frame_length_counter_enable = to_remote_cfg_valid_i && to_remote_cfg_ready_o;
+    frame_length_holder_enable = 1'b0;
+    next_state_ready_to_transfer = cur_state_cfg_ready_to_transfer;
+    case (cur_state_cfg_ready_to_transfer)
+      sIDLE: begin
+        cfg_ready_to_transfer = to_remote_cfg_valid_i;
+        frame_length_counter_clear = 1'b1;
+        if (to_remote_cfg_valid_i && to_remote_cfg_ready_o && to_remote_cfg_desc.dma_length > 1) begin
+          // When the first frame is acknowledged, and the length is larger than 1, then the remaining several frames are not the header, so should not commit the new transfer
+          frame_length_counter_clear   = 1'b0;
+          frame_length_holder_enable   = 1'b1;
+          next_state_ready_to_transfer = sSendFrameBody;
+        end
+      end
+      sSendFrameBody: begin
+        if (frame_length_counter == frame_length_holder - 1) begin
+          next_state_ready_to_transfer = sIDLE;
+        end
+      end
+      default: begin
+        next_state_ready_to_transfer = sIDLE;
+      end
+    endcase
+  end
 
   //--------------------------------------
   // Req Manager
@@ -549,7 +599,7 @@ module xdma_axi_adapter_top
 
   //-------------------------------------
   // Finish Manager
-  //-------------------------------------  
+  //-------------------------------------
   logic  from_remote_data_happening;
   addr_t remote_addr;
   id_t   from_remote_dma_id;

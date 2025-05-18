@@ -5,71 +5,60 @@
 //! XDMA Package
 /// Contains all necessary type definitions, constants, and generally useful functions.
 package xdma_pkg;
+  localparam int unsigned DMAIdWidth = 32'd4;
   localparam int unsigned AxiDataWidth = 32'd512;
   localparam int unsigned StrbWidth = AxiDataWidth / 8;
-  localparam int unsigned DMAIdWidth = 32'd8;
   localparam int unsigned AddrWidth = 32'd48;
   localparam int unsigned StrideWidth = 32'd19;
   localparam int unsigned BoundWidth = 32'd19;
-  localparam int unsigned EnableChannelWidth = 32'd8;
-  localparam int unsigned EnableByteWidth = 32'd8;
+  // localparam int unsigned EnableChannelWidth = 32'd8;
+  // localparam int unsigned EnableByteWidth = 32'd8;
   localparam int unsigned DMALengthWidth = 32'd19;
-  localparam int unsigned NrBroadcast = 32'd4;
-  localparam int unsigned NrDimension = 32'd6;
+  // localparam int unsigned NrBroadcast  = 32'd4;
+  // localparam int unsigned NrDimension = 32'd6;
+  typedef logic [DMAIdWidth-1:0] id_t;
   typedef logic [AxiDataWidth-1:0] data_t;
   typedef logic [StrbWidth-1:0] strb_t;
-  typedef logic [DMAIdWidth-1:0] id_t;
   typedef logic [AddrWidth-1:0] addr_t;
-  typedef logic [StrideWidth-1:0] stride_t;
-  typedef logic [BoundWidth-1:0] bound_t;
-  typedef logic [EnableChannelWidth-1:0] enable_channel_t;
-  typedef logic [EnableByteWidth-1:0] enable_byte_t;
+  // typedef logic [StrideWidth-1:0] stride_t;
+  // typedef logic [BoundWidth-1:0] bound_t;
+  // typedef logic [EnableChannelWidth-1:0] enable_channel_t;
+  // typedef logic [EnableByteWidth-1:0] enable_byte_t;
   typedef logic [DMALengthWidth-1:0] len_t;
   typedef logic [AxiDataWidth-DMAIdWidth-AddrWidth-1:0] grant_reserved_t;
   typedef logic [AxiDataWidth-DMAIdWidth-AddrWidth-1:0] finish_reserved_t;
 
+  localparam int unsigned TotalFrameWidth = 32'd4;
+  typedef logic [TotalFrameWidth-1:0] frame_length_t;
+  localparam int unsigned FirstFrameRemaingPayloadWidth = AxiDataWidth - 1 - TotalFrameWidth - DMAIdWidth - AddrWidth - AddrWidth;
+  typedef logic [FirstFrameRemaingPayloadWidth-1:0] first_frame_remaining_payload_t;
+  localparam int unsigned RemainingPayloadWidth = AxiDataWidth - 1 - TotalFrameWidth;
+  typedef logic [RemainingPayloadWidth-1:0] remaining_payload_t;
+
   //--------------------------------------
   // to remote cfg type
   //--------------------------------------
-  typedef struct packed {
-    addr_t write_addr_3;
-    addr_t write_addr_2;
-    addr_t write_addr_1;
-    addr_t write_addr_0;
-  } xdma_inter_cluster_cfg_broadcast_t;
 
   typedef struct packed {
-    bound_t temporal_bound_5;
-    bound_t temporal_bound_4;
-    bound_t temporal_bound_3;
-    bound_t temporal_bound_2;
-    bound_t temporal_bound_1;
-    bound_t temporal_bound_0;
-  } xdma_inter_cluster_cfg_temporal_bound_t;
-
-  typedef struct packed {
-    stride_t temporal_stride_5;
-    stride_t temporal_stride_4;
-    stride_t temporal_stride_3;
-    stride_t temporal_stride_2;
-    stride_t temporal_stride_1;
-    stride_t temporal_stride_0;
-  } xdma_inter_cluster_cfg_temporal_stride_t;
-
-  typedef struct packed {
-    enable_byte_t                            enable_byte;
-    enable_channel_t                         enable_channel;
-    xdma_inter_cluster_cfg_temporal_stride_t temporal_stride;
-    xdma_inter_cluster_cfg_temporal_bound_t  temporal_bound;
-    stride_t                                 spatial_stride;
-    xdma_inter_cluster_cfg_broadcast_t       writer_addr;
-    addr_t                                   reader_addr;
+    first_frame_remaining_payload_t first_frame_remaining_payload;
+    addr_t                          writer_addr;
+    addr_t                          reader_addr;
+    id_t                            dma_id;
+    frame_length_t                  frame_length;
     // The dma_type
     // 0: read
     // 1: write
-    logic                                    dma_type;
-    id_t                                     dma_id;
+    logic                           dma_type;
   } xdma_inter_cluster_cfg_t;
+
+  // typedef struct packed {
+  //   remaining_payload_t remaining_payload;
+  //   // The dma_type
+  //   // 0: read
+  //   // 1: write
+  //   logic               dma_type;
+  //   id_t                dma_id;
+  // } xdma_inter_cluster_cfg_t;
 
   typedef logic [AxiDataWidth-1:0] xdma_to_remote_data_t;
   typedef logic [AxiDataWidth-1:0] xdma_from_remote_data_t;
@@ -87,14 +76,6 @@ package xdma_pkg;
     ToRemoteData   = 3,
     NUM_INP = 4
   } xdma_to_remote_idx_e;
-
-  // typedef enum int unsigned {
-  //     ToRemoteCfg  = 0,
-  //     ToRemoteData = 1,
-  //     ToRemoteGrant= 2,
-  //     NUM_INP = 3
-  // } xdma_to_remote_idx_e;
-
 
   typedef logic [$clog2(NUM_INP)-1:0] xdma_req_idx_t;
   //--------------------------------------
