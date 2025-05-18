@@ -67,23 +67,22 @@ package xdma_pkg;
     first_frame_remaining_payload_t first_frame_remaining_payload;
     addr_t                          writer_addr;
     addr_t                          reader_addr;
-
-    id_t           dma_id;
-    frame_length_t frame_length;
+    id_t                            dma_id;
+    frame_length_t                  frame_length;
     // The dma_type
     // 0: read
     // 1: write
-    logic          dma_type;
-  } xdma_inter_cluster_first_cfg_t;
-
-  typedef struct packed {
-    remaining_payload_t remaining_payload;
-    // The dma_type
-    // 0: read
-    // 1: write
-    logic               dma_type;
-    id_t                dma_id;
+    logic                           dma_type;
   } xdma_inter_cluster_cfg_t;
+
+  // typedef struct packed {
+  //   remaining_payload_t remaining_payload;
+  //   // The dma_type
+  //   // 0: read
+  //   // 1: write
+  //   logic               dma_type;
+  //   id_t                dma_id;
+  // } xdma_inter_cluster_cfg_t;
 
   typedef logic [AxiDataWidth-1:0] xdma_to_remote_data_t;
   typedef logic [AxiDataWidth-1:0] xdma_from_remote_data_t;
