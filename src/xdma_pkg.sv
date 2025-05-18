@@ -38,30 +38,6 @@ package xdma_pkg;
   //--------------------------------------
   // to remote cfg type
   //--------------------------------------
-  // typedef struct packed {
-  //   addr_t write_addr_3;
-  //   addr_t write_addr_2;
-  //   addr_t write_addr_1;
-  //   addr_t write_addr_0;
-  // } xdma_inter_cluster_cfg_broadcast_t;
-
-  // typedef struct packed {
-  //   bound_t temporal_bound_5;
-  //   bound_t temporal_bound_4;
-  //   bound_t temporal_bound_3;
-  //   bound_t temporal_bound_2;
-  //   bound_t temporal_bound_1;
-  //   bound_t temporal_bound_0;
-  // } xdma_inter_cluster_cfg_temporal_bound_t;
-
-  // typedef struct packed {
-  //   stride_t temporal_stride_5;
-  //   stride_t temporal_stride_4;
-  //   stride_t temporal_stride_3;
-  //   stride_t temporal_stride_2;
-  //   stride_t temporal_stride_1;
-  //   stride_t temporal_stride_0;
-  // } xdma_inter_cluster_cfg_temporal_stride_t;
 
   typedef struct packed {
     first_frame_remaining_payload_t first_frame_remaining_payload;
@@ -100,14 +76,6 @@ package xdma_pkg;
     ToRemoteData   = 3,
     NUM_INP = 4
   } xdma_to_remote_idx_e;
-
-  // typedef enum int unsigned {
-  //     ToRemoteCfg  = 0,
-  //     ToRemoteData = 1,
-  //     ToRemoteGrant= 2,
-  //     NUM_INP = 3
-  // } xdma_to_remote_idx_e;
-
 
   typedef logic [$clog2(NUM_INP)-1:0] xdma_req_idx_t;
   //--------------------------------------

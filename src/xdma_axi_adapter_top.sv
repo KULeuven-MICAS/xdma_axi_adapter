@@ -49,19 +49,13 @@ module xdma_axi_adapter_top
     /// The data is logic [DataWidth-1:0]
     parameter type xdma_to_remote_data_accompany_cfg_t = logic,
     /// typedef struct packed {
-    ///     id_t                                 dma_id; 
+    ///     id_t                                 dma_id;
     ///     logic                                dma_type;
     ///     addr_t                               src_addr;
     ///     addr_t                               dst_addr;
     ///     len_t                                dma_length;
     ///     logic                                ready_to_transfer;
     /// } xdma_accompany_cfg_t;
-    /// - dma_id:
-    /// - dma_type:
-    /// - src_addr:
-    /// - dst_addr:
-    /// - dma_length:
-    /// - ready_to_transfer:
     parameter type xdma_req_desc_t                     = logic,
 
     /// typedef struct packed {
@@ -87,7 +81,7 @@ module xdma_axi_adapter_top
     // typedef struct packed {
     //     id_t                                 dma_id;
     //     addr_t                               from;
-    // } xdma_from_remote_grant_t;    
+    // } xdma_from_remote_grant_t;
     parameter type xdma_from_remote_cfg_t   = logic,
     // typedef struct packed {
     //   first_frame_remaining_payload_t first_frame_remaining_payload;
@@ -111,7 +105,7 @@ module xdma_axi_adapter_top
     //     addr_t                               dst_addr;
     //     len_t                                dma_length;
     //     logic                                ready_to_transfer;
-    // } xdma_accompany_cfg_t;    
+    // } xdma_accompany_cfg_t;
 
     // Cluster Cfgs
     parameter addr_t ClusterBaseAddr     = 'h1000_0000,
@@ -215,8 +209,7 @@ module xdma_axi_adapter_top
     to_remote_cfg_desc.remote_addr         = (to_remote_cfg_desc.dma_type == 1'b0)
                                                ? (to_remote_cfg_i.reader_addr >= MainMemBaseAddr) ? MainMemEndAddr-MMIOCFGOffset : get_cluster_end_addr(
         to_remote_cfg_i.reader_addr) - MMIOCFGOffset :
-        (to_remote_cfg_i.writer_addr >= MainMemBaseAddr) ?
-        MainMemEndAddr - MMIOCFGOffset :
+        (to_remote_cfg_i.writer_addr >= MainMemBaseAddr) ? MainMemEndAddr - MMIOCFGOffset :
         get_cluster_end_addr(to_remote_cfg_i.writer_addr) - MMIOCFGOffset;
     // The cfg length is stored in the first frame.
     to_remote_cfg_desc.dma_length = to_remote_cfg_i.frame_length;
@@ -315,8 +308,8 @@ module xdma_axi_adapter_top
         frame_length_counter_clear = 1'b1;
         if (to_remote_cfg_valid_i && to_remote_cfg_ready_o && to_remote_cfg_desc.dma_length > 1) begin
           // When the first frame is acknowledged, and the length is larger than 1, then the remaining several frames are not the header, so should not commit the new transfer
-          frame_length_counter_clear = 1'b0;
-          frame_length_holder_enable = 1'b1;
+          frame_length_counter_clear   = 1'b0;
+          frame_length_holder_enable   = 1'b1;
           next_state_ready_to_transfer = sSendFrameBody;
         end
       end
@@ -324,6 +317,9 @@ module xdma_axi_adapter_top
         if (frame_length_counter == frame_length_holder - 1) begin
           next_state_ready_to_transfer = sIDLE;
         end
+      end
+      default: begin
+        next_state_ready_to_transfer = sIDLE;
       end
     endcase
   end
@@ -603,7 +599,7 @@ module xdma_axi_adapter_top
 
   //-------------------------------------
   // Finish Manager
-  //-------------------------------------  
+  //-------------------------------------
   logic  from_remote_data_happening;
   addr_t remote_addr;
   id_t   from_remote_dma_id;
