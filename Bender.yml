@@ -29,7 +29,7 @@ sources:
   - src/xdma_req_backend.sv
   - src/xdma_axi_adapter_top.sv
 
-  - target: test
+  - target: xdma_axi_adapter_test
     files:
       - test/tb_find_first_one_idx.sv
       - test/tb_xdma_meta_manager.sv
