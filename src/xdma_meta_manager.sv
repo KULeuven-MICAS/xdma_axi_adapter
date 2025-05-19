@@ -77,31 +77,38 @@ module xdma_meta_manager #(
     endcase
   end
 
+  // Counter Holder Register
+  len_t lens_holder_q;
+  logic lens_holder_en;
+  always_ff @(posedge clk_i, negedge rst_ni) begin
+    if (!rst_ni) begin
+      lens_holder_q <= '0;
+    end else if (lens_holder_en) begin
+      lens_holder_q <= write_req_meta_i.dma_length;
+    end
+  end
+
   // Output logic
   always_comb begin : proc_output_logic
     counter_en = 1'b0;
     counter_clear = 1'b0;
+    lens_holder_en = 1'b0;
     write_req_done_o = 1'b0;
     cur_dma_id_o = 1'b0;
     case (cur_state)
       IDLE: begin
-        counter_en = 1'b0;
-        counter_clear = 1'b0;
-        if (write_req_busy_i) counter_clear = 1'b1;
-        write_req_done_o = 1'b0;
-        cur_dma_id_o = 1'b0;
+        if (write_req_busy_i) begin
+          counter_clear = 1'b1;
+          lens_holder_en = 1'b1;
+        end
       end
       BUSY: begin
         counter_en = write_happening_i;
-        counter_clear = 1'b0;
-        write_req_done_o = (lens_counter_q == write_req_meta_i.dma_length - 1) && write_happening_i;
+        write_req_done_o = (lens_counter_q == lens_holder_q - 1) && write_happening_i;
         cur_dma_id_o = write_req_meta_i.dma_id;
       end
       FINISH: begin
-        counter_en = 1'b0;
         counter_clear = 1'b1;
-        write_req_done_o = 1'b0;
-        cur_dma_id_o = '0;
       end
     endcase
   end
