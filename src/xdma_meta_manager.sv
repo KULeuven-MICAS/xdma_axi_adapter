@@ -32,9 +32,9 @@ module xdma_meta_manager #(
     input  logic           write_happening_i
 );
 
+  // The counter to count the number of data sent
   logic counter_en;
   logic counter_clear;
-  logic counter_load;
   len_t lens_counter_q;
   counter #(
       .WIDTH($bits(len_t))
@@ -43,8 +43,8 @@ module xdma_meta_manager #(
       .rst_ni    (rst_ni),
       .clear_i   (counter_clear),
       .en_i      (counter_en),
-      .load_i    (counter_load),
-      .down_i    (1'b1),
+      .load_i    ('0),
+      .down_i    (1'b0),
       .d_i       (write_req_meta_i.dma_length),
       .q_o       (lens_counter_q),
       .overflow_o()
@@ -72,7 +72,7 @@ module xdma_meta_manager #(
     next_state = cur_state;
     case (cur_state)
       IDLE:   if (write_req_busy_i) next_state = BUSY;
-      BUSY:   if (lens_counter_q == '0) next_state = FINISH;
+      BUSY:   if (write_req_done_o) next_state = FINISH;
       FINISH: next_state = IDLE;
     endcase
   end
@@ -81,90 +81,28 @@ module xdma_meta_manager #(
   always_comb begin : proc_output_logic
     counter_en = 1'b0;
     counter_clear = 1'b0;
-    counter_load = 1'b0;
     write_req_done_o = 1'b0;
     cur_dma_id_o = 1'b0;
     case (cur_state)
       IDLE: begin
         counter_en = 1'b0;
         counter_clear = 1'b0;
-        if (write_req_busy_i) counter_load = 1'b1;
+        if (write_req_busy_i) counter_clear = 1'b1;
         write_req_done_o = 1'b0;
         cur_dma_id_o = 1'b0;
       end
       BUSY: begin
         counter_en = write_happening_i;
         counter_clear = 1'b0;
-        counter_load = 1'b0;
-        write_req_done_o = (lens_counter_q == '0);
+        write_req_done_o = (lens_counter_q == write_req_meta_i.dma_length - 1) && write_happening_i;
         cur_dma_id_o = write_req_meta_i.dma_id;
       end
       FINISH: begin
         counter_en = 1'b0;
         counter_clear = 1'b1;
-        counter_load = 1'b0;
         write_req_done_o = 1'b0;
         cur_dma_id_o = '0;
       end
     endcase
   end
-
-
-
-  // //--------------------------------------
-  // // Req Meta fifo
-  // //--------------------------------------
-  // // Right 
-  // xdma_req_meta_t cur_req_meta;
-  // logic req_meta_fifo_full;
-  // logic req_meta_fifo_empty;
-  // logic req_meta_fifo_push;
-  // logic req_meta_fifo_pop;
-  // // FIFO acting like a reg
-  // // leave here for future extensibility
-  // fifo_v3 #(
-  //     .DEPTH(1),
-  //     .dtype(xdma_req_meta_t)
-  // ) i_req_meta_queue (
-  //     .clk_i     (clk_i                ),
-  //     .rst_ni    (rst_ni               ),
-  //     .flush_i   (1'b0                 ),
-  //     .testmode_i(1'b0                 ),
-  //     .full_o    (req_meta_fifo_full   ),
-  //     .empty_o   (req_meta_fifo_empty  ),
-  //     .usage_o   (                     ),
-  //     .data_i    (write_req_meta_i     ),
-  //     .push_i    (req_meta_fifo_push   ),
-  //     .data_o    (cur_req_meta         ),
-  //     .pop_i     (req_meta_fifo_pop    )
-  // );
-  // assign req_meta_fifo_push = write_req_busy_i && !req_meta_fifo_full;
-
-  // assign cur_dma_id_o = cur_req_meta.dma_id;
-  // //--------------------------------------
-  // // Transfer Counter
-  // //--------------------------------------
-  // // Here we use a counter to track the handshake signal from the W
-  // logic clear_counter;
-  // logic en_counter;
-  // len_t counter_q;
-
-  // counter #(
-  //     .WIDTH (LenWidth)
-  // ) i_trans_counter (
-  //     .clk_i       ( clk_i              ),
-  //     .rst_ni      ( rst_ni             ),
-  //     .clear_i     ( clear_counter      ),
-  //     .en_i        ( en_counter         ),
-  //     .load_i      ( '0                 ),
-  //     .down_i      ( '0                 ),
-  //     .d_i         ( '0                 ),
-  //     .q_o         ( counter_q          ),
-  //     .overflow_o  (                    )
-  // );
-  // assign en_counter = write_happening_i && !req_meta_fifo_empty;
-  // assign clear_counter = (counter_q==cur_req_meta.dma_length) && !req_meta_fifo_empty;
-  // assign write_req_done_o = clear_counter;
-
-  // assign req_meta_fifo_pop = clear_counter;
 endmodule
