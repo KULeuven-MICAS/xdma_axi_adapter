@@ -156,26 +156,31 @@ module xdma_axi_adapter_top
   //--------------------------------------
   // Define Macros
   //--------------------------------------
-  localparam int SHIFT_BITS = $clog2(ClusterAddressSpace);
+  localparam int ClusterAddressLength = $clog2(ClusterAddressSpace);
   localparam addr_t MMIODataOffset = (xdma_pkg::FromRemoteData + 1) * (MMIOSize / 4) * 1024;
   localparam addr_t MMIOCFGOffset = (xdma_pkg::FromRemoteCfg + 1) * (MMIOSize / 4) * 1024;
   localparam addr_t MMIOGrantOffset = (xdma_pkg::FromRemoteGrant + 1) * (MMIOSize / 4) * 1024;
   localparam addr_t MMIOFinishOffset = (xdma_pkg::FromRemoteFinish + 1) * (MMIOSize / 4) * 1024;
 
-  function int get_cluster_id(addr_t addr);
-    return (addr - ClusterBaseAddr) >> SHIFT_BITS;
+  function automatic addr_t get_cluster_base_addr(addr_t addr);
+    return addr & {{($bits(addr_t) - ClusterAddressLength) {1'b1}}, {ClusterAddressLength{1'b0}}};
   endfunction
 
-  function addr_t get_cluster_base_addr(addr_t addr);
-    int cluster_id;
-    cluster_id = get_cluster_id(addr);
-    return ClusterBaseAddr + cluster_id * ClusterAddressSpace;
+  function automatic addr_t get_cluster_end_addr(addr_t addr);
+    return (addr & {{(AddrWidth - ClusterAddressLength) {1'b1}},
+                    {ClusterAddressLength{1'b0}}}) + ClusterAddressSpace;
   endfunction
 
-  function addr_t get_cluster_end_addr(addr_t addr);
-    int cluster_id;
-    cluster_id = get_cluster_id(addr);
-    return ClusterBaseAddr + (cluster_id + 1) * ClusterAddressSpace;
+  function automatic addr_t get_main_mem_base_addr(addr_t addr);
+    return {addr[AddrWidth-1:AddrWidth-ChipIdWidth], MainMemBaseAddr[AddrWidth-ChipIdWidth-1:0]};
+  endfunction
+
+  function automatic addr_t get_main_mem_end_addr(addr_t addr);
+    return {addr[AddrWidth-1:AddrWidth-ChipIdWidth], MainMemEndAddr[AddrWidth-ChipIdWidth-1:0]};
+  endfunction
+
+  function automatic logic address_is_main_mem(addr_t addr);
+    return addr[AddrWidth-ChipIdWidth-1:0] >= MainMemBaseAddr;
   endfunction
   //--------------------------------------
   // Unpack the req descriptor
@@ -206,10 +211,11 @@ module xdma_axi_adapter_top
     // local is writer addr, remote is reader addr
     // If the task is a write (task_type=1)
     // local is read addr, remote is writer addr
-    to_remote_cfg_desc.remote_addr         = (to_remote_cfg_desc.dma_type == 1'b0)
-                                               ? (to_remote_cfg_i.reader_addr >= MainMemBaseAddr) ? MainMemEndAddr-MMIOCFGOffset : get_cluster_end_addr(
-        to_remote_cfg_i.reader_addr) - MMIOCFGOffset :
-        (to_remote_cfg_i.writer_addr >= MainMemBaseAddr) ? MainMemEndAddr - MMIOCFGOffset :
+    to_remote_cfg_desc.remote_addr = (to_remote_cfg_desc.dma_type == 1'b0) ? address_is_main_mem(
+        to_remote_cfg_i.reader_addr) ? get_main_mem_end_addr(to_remote_cfg_i.reader_addr) -
+        MMIOCFGOffset : get_cluster_end_addr(to_remote_cfg_i.reader_addr) - MMIOCFGOffset :
+        address_is_main_mem(to_remote_cfg_i.writer_addr) ?
+        get_main_mem_end_addr(to_remote_cfg_i.writer_addr) - MMIOCFGOffset :
         get_cluster_end_addr(to_remote_cfg_i.writer_addr) - MMIOCFGOffset;
     // The cfg length is stored in the first frame.
     to_remote_cfg_desc.dma_length = to_remote_cfg_i.frame_length;
@@ -237,8 +243,9 @@ module xdma_axi_adapter_top
     //    now the accompany_cfg.src_addr = cluster 0 addr
     //            accompany_cfg.dst_addr = cluster 1 addr
     //    the to_remote_data_desc.remote_addr = dst_addr
-    to_remote_data_desc.remote_addr        = (to_remote_data_accompany_cfg_i.dst_addr>=MainMemBaseAddr) ? MainMemEndAddr-MMIODataOffset : get_cluster_end_addr(
-        to_remote_data_accompany_cfg_i.dst_addr) - MMIODataOffset;
+    to_remote_data_desc.remote_addr = address_is_main_mem(to_remote_data_accompany_cfg_i.dst_addr) ?
+        get_main_mem_end_addr(to_remote_data_accompany_cfg_i.dst_addr) - MMIODataOffset :
+        get_cluster_end_addr(to_remote_data_accompany_cfg_i.dst_addr) - MMIODataOffset;
     to_remote_data_desc.ready_to_transfer = to_remote_data_accompany_cfg_i.ready_to_transfer;
 
     //--------------------------------------
@@ -247,8 +254,10 @@ module xdma_axi_adapter_top
     to_remote_grant_desc.dma_id = from_remote_data_accompany_cfg_i.dma_id;
     to_remote_grant_desc.dma_length = 1;
     to_remote_grant_desc.dma_type = from_remote_data_accompany_cfg_i.dma_type;
-    to_remote_grant_desc.remote_addr = (from_remote_data_accompany_cfg_i.src_addr>=MainMemBaseAddr)? MainMemEndAddr-MMIOGrantOffset : get_cluster_end_addr(
-        from_remote_data_accompany_cfg_i.src_addr) - MMIOGrantOffset;
+    to_remote_grant_desc.remote_addr =
+        address_is_main_mem(from_remote_data_accompany_cfg_i.src_addr) ?
+        get_main_mem_end_addr(from_remote_data_accompany_cfg_i.src_addr) - MMIOGrantOffset :
+        get_cluster_end_addr(from_remote_data_accompany_cfg_i.src_addr) - MMIOGrantOffset;
     to_remote_grant_desc.ready_to_transfer = from_remote_data_accompany_cfg_i.ready_to_transfer;
 
   end
@@ -493,10 +502,14 @@ module xdma_axi_adapter_top
   // Receiver demux
   //-------------------------------------
   xdma_pkg::rule_t [xdma_pkg::NUM_OUP-1:0] xdma_rules;
-  addr_t cluster_end_addr;
   addr_t local_end_addr;
-  assign cluster_end_addr = cluster_base_addr_i + ClusterAddressSpace;
-  assign local_end_addr = (cluster_base_addr_i==MainMemBaseAddr)? MainMemEndAddr : cluster_end_addr;
+  assign local_end_addr = address_is_main_mem(
+      cluster_base_addr_i
+  ) ? get_main_mem_end_addr(
+      cluster_base_addr_i
+  ) : get_cluster_end_addr(
+      cluster_base_addr_i
+  );
   assign xdma_rules = {
     xdma_pkg::rule_t
 '{
@@ -635,8 +648,8 @@ module xdma_axi_adapter_top
     //--------------------------------------
     to_remote_finish_desc.dma_id = from_remote_dma_id;
     to_remote_finish_desc.dma_type = 1'b1;  // write
-    to_remote_finish_desc.remote_addr= (remote_addr>=MainMemBaseAddr)? MainMemEndAddr-MMIOFinishOffset : get_cluster_end_addr(
-        remote_addr) - MMIOFinishOffset;
+    to_remote_finish_desc.remote_addr = address_is_main_mem(remote_addr) ? get_main_mem_end_addr(
+        remote_addr) - MMIOFinishOffset : get_cluster_end_addr(remote_addr) - MMIOFinishOffset;
     to_remote_finish_desc.dma_length = 1;
     to_remote_finish_desc.ready_to_transfer = to_remote_finish_valid;
   end
