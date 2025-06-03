@@ -460,7 +460,6 @@ module xdma_axi_adapter_top
   ) i_xdma_grant_manager (
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),
-      .from_remote_grant_i             (grant),
       .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg_i),
       .to_remote_grant_valid_o         (to_remote_grant_valid),
       .to_remote_grant_ready_i         (to_remote_grant_ready)
