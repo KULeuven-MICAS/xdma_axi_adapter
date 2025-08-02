@@ -613,11 +613,11 @@ module xdma_axi_adapter_top
   //-------------------------------------
   // Finish Manager
   //-------------------------------------
-  logic  from_remote_data_happening;
+  // logic  from_remote_data_happening;
   addr_t remote_addr;
   id_t   from_remote_dma_id;
-  assign from_remote_data_happening = from_remote_data_valid_o && from_remote_data_ready_i;
-  xdma_finish_manager #(
+  // assign from_remote_data_happening = from_remote_data_valid_o && from_remote_data_ready_i;
+  xdma_finish_manager_v2 #(
       .id_t                                 (id_t),
       .len_t                                (len_t),
       .addr_t                               (addr_t),
@@ -632,7 +632,7 @@ module xdma_axi_adapter_top
       .rst_ni                          (rst_ni),
       .xdma_finish_o                   (xdma_finish_o),
       .to_remote_data_accompany_cfg_i  (to_remote_data_accompany_cfg_i),
-      .from_remote_data_happening_i    (from_remote_data_happening),
+      // .from_remote_data_happening_i    (from_remote_data_happening),
       .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg_i),
       .from_remote_finish_i            (from_remote_finish),
       .from_remote_finish_valid_i      (from_remote_finish_valid),

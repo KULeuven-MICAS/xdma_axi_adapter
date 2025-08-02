@@ -24,7 +24,8 @@ sources:
   - src/xdma_meta_manager.sv
   - src/xdma_axi_to_write.sv
   - src/xdma_write_demux.sv
-  - src/xdma_finish_manager.sv
+  # - src/xdma_finish_manager.sv
+  - src/xdma_finish_manager_v2.sv
   # Level 3
   - src/xdma_req_backend.sv
   - src/xdma_axi_adapter_top.sv
