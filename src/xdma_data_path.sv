@@ -108,12 +108,12 @@ module xdma_data_path #(
         write_req_data_ready_o = (w_desc_i.is_write_data)? (write_req_grant_i && w_ready_i) : w_ready_i;
         counter_en = w_valid_o && w_ready_i;
         counter_load = 1'b0;
-        if ((beats_counter_q == w_desc_i.num_beats-1) && w_valid_o && w_ready_i) begin
+        if ((beats_counter_q == w_desc_i.num_beats - 1) && w_valid_o && w_ready_i) begin
           counter_clear = 1'b1;
           w_last_o = 1'b1;
           w_dp_ready_o = 1'b1;
         end
-        if(!w_dp_valid_i) next_state = IDLE;
+        if (!w_dp_valid_i) next_state = IDLE;
       end
       default: begin
         next_state = IDLE;
