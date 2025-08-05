@@ -6,7 +6,7 @@ module dw_converter #(
     parameter int unsigned INPUT_DW  = 512,
     parameter int unsigned OUTPUT_DW = 64
 ) (
-    input  logic                 clk,
+    input  logic                 clk_i,
     input  logic                 rst_ni,
     input  logic [INPUT_DW-1:0]  data_i,
     input  logic                 valid_i,

@@ -271,7 +271,7 @@ module xdma_axi_adapter_top
     // The cfg length is stored in the first frame.
     // Since now we are using the narrow instead of the wide to send the cfg
     // we need to multiple the 512/64 = 8 to the dma length
-    to_remote_cfg_desc.dma_length = to_remote_cfg_i.frame_length << clog2(xdma_pkg::WIDE_NARROW_DW_RATIO);
+    to_remote_cfg_desc.dma_length = to_remote_cfg_i.frame_length << xdma_pkg::WIDE_NARROW_DW_BITS;
     // Ready to transfer logic: Is a FSM that counts the frames to determine the frame header
     // FSM will control cfg_ready_to_transfer signal when the first frame is there
     to_remote_cfg_desc.ready_to_transfer = cfg_ready_to_transfer;
@@ -485,8 +485,8 @@ module xdma_axi_adapter_top
       .xdma_req_desc_t        (xdma_req_desc_t                    ),
       .xdma_req_aw_desc_t     (xdma_pkg::xdma_req_aw_desc_t       ),
       .xdma_req_w_desc_t      (xdma_pkg::xdma_req_w_desc_t        ),
-      .axi_narrow_out_req_t   (axi_narrow_out_req_t               ),
-      .axi_narrow_out_resp_t  (axi_narrow_out_resp_t              )
+      .axi_out_req_t          (axi_narrow_out_req_t               ),
+      .axi_out_resp_t         (axi_narrow_out_resp_t              )
   ) i_xdma_narrow_req_backend (
       .clk_i                 (clk_i                      ),
       .rst_ni                (rst_ni                     ),
@@ -525,8 +525,8 @@ module xdma_axi_adapter_top
       .xdma_req_desc_t        (xdma_req_desc_t                  ),
       .xdma_req_aw_desc_t     (xdma_pkg::xdma_req_aw_desc_t     ),
       .xdma_req_w_desc_t      (xdma_pkg::xdma_req_w_desc_t      ),
-      .axi_wide_out_req_t     (axi_wide_out_req_t               ),
-      .axi_wide_out_resp_t    (axi_wide_out_resp_t              )
+      .axi_out_req_t          (axi_wide_out_req_t               ),
+      .axi_out_resp_t         (axi_wide_out_resp_t              )
   ) i_xdma_wide_req_backend (
       .clk_i                 (clk_i                    ),
       .rst_ni                (rst_ni                   ),
@@ -697,7 +697,7 @@ module xdma_axi_adapter_top
   always_comb begin : proc_compose_wide_data
     from_remote_data_o = wide_receive_write_req.data;
     from_remote_data_valid_o = wide_receive_write_req.q_valid;
-    receive_write_rsp.q_ready = from_remote_data_ready_i;
+    wide_receive_write_rsp.q_ready = from_remote_data_ready_i;
   end
 
   // For control (cfg, grant, finish), we need the demux

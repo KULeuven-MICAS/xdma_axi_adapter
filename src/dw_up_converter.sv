@@ -8,7 +8,7 @@ module dw_up_converter #(
     /// Dependent parameters, DO NOT OVERRIDE!
     parameter int unsigned UP_RATIO = OUTPUT_DW / INPUT_DW
 ) (
-    input  logic                 clk,
+    input  logic                 clk_i,
     input  logic                 rst_ni,
     input  logic [INPUT_DW-1:0]  data_i,
     input  logic                 valid_i,
@@ -34,7 +34,7 @@ module dw_up_converter #(
         .WIDTH(CNT_WIDTH),
         .STICKY_OVERFLOW(1'b0)
     ) u_counter (
-        .clk_i       (clk),
+        .clk_i       (clk_i),
         .rst_ni      (rst_ni),
         .clear_i     (counter_clr),
         .en_i        (counter_en),
@@ -66,7 +66,7 @@ module dw_up_converter #(
     assign ready_o = (!valid_o || ready_i); // Only take data if downstream can accept it
 
     // Buffer register update
-    always_ff @(posedge clk or negedge rst_ni) begin
+    always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
             buffer_q <= '0;
         end else if (buffer_we) begin

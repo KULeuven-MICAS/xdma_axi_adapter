@@ -11,7 +11,7 @@ package xdma_pkg;
   localparam int unsigned WideStrbWidth = AxiWideDataWidth / 8;
   localparam int unsigned AxiNarrowDataWidth = 32'd64;
   localparam int unsigned NarrowStrbWidth = AxiNarrowDataWidth / 8;
-  localparam int unsigned WIDE_NARROW_DW_RATIO = AxiWideDataWidth / AxiNarrowDataWidth;
+  localparam int unsigned WIDE_NARROW_DW_BITS = $clog2(AxiWideDataWidth / AxiNarrowDataWidth);
   localparam int unsigned AddrWidth = 32'd48;
   localparam int unsigned StrideWidth = 32'd19;
   localparam int unsigned BoundWidth = 32'd19;

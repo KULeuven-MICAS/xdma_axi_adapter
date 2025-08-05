@@ -7,7 +7,7 @@ module dw_down_converter #(
     // Dependent parameters, DO NOT OVERRIDE!
     parameter int unsigned DOWN_RATIO = INPUT_DW / OUTPUT_DW
 ) (
-    input  logic                 clk,
+    input  logic                 clk_i,
     input  logic                 rst_ni,
     input  logic [INPUT_DW-1:0]  data_i,
     input  logic                 valid_i,
@@ -33,7 +33,7 @@ module dw_down_converter #(
         .WIDTH(CNT_WIDTH),
         .STICKY_OVERFLOW(1'b0)
     ) u_counter (
-        .clk_i       (clk),
+        .clk_i       (clk_i),
         .rst_ni      (rst_ni),
         .clear_i     (counter_clr),
         .en_i        (counter_en),
@@ -47,7 +47,7 @@ module dw_down_converter #(
     // Load data into internal buffer
     assign buffer_load = valid_i && ready_o;
 
-    always_ff @(posedge clk or negedge rst_ni) begin
+    always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
             buffer_q        <= '0;
             buffer_valid_q  <= 1'b0;
