@@ -88,7 +88,8 @@ package xdma_pkg;
     NUM_WIDE_INP   = 1
   } xdma_wide_to_remote_idx_e;  
 
-  typedef logic [$clog2(NUM_INP)-1:0] xdma_req_idx_t;
+  typedef logic [$clog2(NUM_WIDE_INP)-1:0] xdma_wide_req_idx_t;
+  typedef logic [$clog2(NUM_NARROW_INP)-1:0] xdma_narrow_req_idx_t;
   //--------------------------------------
   // Accompany CFG
   //--------------------------------------
@@ -188,7 +189,13 @@ package xdma_pkg;
   //--------------------------------------
   // addr decoder idx
   //--------------------------------------
-
+  typedef enum int unsigned {
+    FinishIdx  = 0,
+    GrantIdx   = 1,
+    CfgIdx     = 2,
+    DataIdx    = 3
+  } xdma_addr_offset_idx_e;
+  
   typedef enum int unsigned {
     FromRemoteFinish = 0,
     FromRemoteGrant  = 1,
@@ -251,7 +258,7 @@ package xdma_pkg;
     logic         error;
     logic         p_valid;
     logic         q_ready;
-  } reqrsp_wide_rsp_t;
+  } reqrsp_narrow_rsp_t;
 
 
 endpackage

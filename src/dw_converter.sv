@@ -4,7 +4,7 @@
 
 module dw_converter #(
     parameter int unsigned INPUT_DW  = 512,
-    parameter int unsigned OUTPUT_DW = 64,
+    parameter int unsigned OUTPUT_DW = 64
 ) (
     input  logic                 clk,
     input  logic                 rst_ni,
@@ -19,7 +19,7 @@ module dw_converter #(
         // Down converter
         dw_down_converter #(
             .INPUT_DW          (INPUT_DW),
-            .OUTPUT_DW         (OUTPUT_DW),
+            .OUTPUT_DW         (OUTPUT_DW)
         ) i_dw_down_converter (
             .clk_i       (clk_i  ),
             .rst_ni      (rst_ni ),
@@ -34,7 +34,7 @@ module dw_converter #(
         // Up converter
         dw_up_converter #(
             .INPUT_DW          (INPUT_DW),
-            .OUTPUT_DW         (OUTPUT_DW),
+            .OUTPUT_DW         (OUTPUT_DW)
         ) i_dw_up_converter (
             .clk_i       (clk_i  ),
             .rst_ni      (rst_ni ),

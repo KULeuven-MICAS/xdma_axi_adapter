@@ -176,13 +176,13 @@ module xdma_axi_adapter_top
   // finish (4kB)
   // cluster end addr (high addr)
   // Data  start addr is cluster_end_addr-16KB
-  localparam addr_t MMIODataOffset = (xdma_pkg::FromRemoteData + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIODataOffset = (xdma_pkg::DataIdx + 1) * (MMIOSize / 4) * 1024;
   // CFG   start addr is cluster_end_addr-12KB
-  localparam addr_t MMIOCFGOffset = (xdma_pkg::FromRemoteCfg + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIOCFGOffset = (xdma_pkg::CfgIdx + 1) * (MMIOSize / 4) * 1024;
   // Grant start addr is cluster_end_addr-8KB
-  localparam addr_t MMIOGrantOffset = (xdma_pkg::FromRemoteGrant + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIOGrantOffset = (xdma_pkg::GrantIdx + 1) * (MMIOSize / 4) * 1024;
   // Finish start addr is cluster_end_addr-4KB
-  localparam addr_t MMIOFinishOffset = (xdma_pkg::FromRemoteFinish + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIOFinishOffset = (xdma_pkg::FinishIdx + 1) * (MMIOSize / 4) * 1024;
 
   function automatic addr_t get_cluster_base_addr(addr_t addr);
     return addr & {{($bits(addr_t) - ClusterAddressLength) {1'b1}}, {ClusterAddressLength{1'b0}}};
@@ -218,7 +218,7 @@ module xdma_axi_adapter_top
   // First we need the dw converter for the cfg from 512->64
   dw_converter #(
       .INPUT_DW          (xdma_pkg::AxiWideDataWidth  ),
-      .OUTPUT_DW         (xdma_pkg::AxiNarrowDataWidth),
+      .OUTPUT_DW         (xdma_pkg::AxiNarrowDataWidth)
   ) i_cfg_dw_up_converter (
       .clk_i       (clk_i                     ),
       .rst_ni      (rst_ni                    ),
@@ -391,7 +391,7 @@ module xdma_axi_adapter_top
   logic wide_write_req_ready;
   // Wide Description
   xdma_req_desc_t wide_write_req_desc;
-  xdma_pkg::xdma_req_idx_t wide_write_req_idx;
+  xdma_pkg::xdma_wide_req_idx_t wide_write_req_idx;
   // Wide Status
   logic wide_write_req_start;
   logic wide_write_req_busy;
@@ -425,7 +425,7 @@ module xdma_axi_adapter_top
   logic narrow_write_req_ready;
   // Narrow Description
   xdma_req_desc_t narrow_write_req_desc;
-  xdma_pkg::xdma_req_idx_t narrow_write_req_idx;
+  xdma_pkg::xdma_narrow_req_idx_t narrow_write_req_idx;
   // Narrow Status
   logic narrow_write_req_start;
   logic narrow_write_req_busy;
@@ -470,17 +470,17 @@ module xdma_axi_adapter_top
   logic narrow_write_req_data_ready;
   logic narrow_write_req_desc_valid;
   xdma_req_backend #(
-      .ReqFifoDepth           (3                           ),
-      .addr_t                 (addr_t                      ),
-      .data_t                 (narrow_data_t               ),
-      .strb_t                 (narrow_strb_t               ),
-      .len_t                  (len_t                       ),
-      .xdma_req_idx_t         (xdma_pkg::xdma_req_idx_t    ),
-      .xdma_req_desc_t        (xdma_req_desc_t             ),
-      .xdma_req_aw_desc_t     (xdma_pkg::xdma_req_aw_desc_t),
-      .xdma_req_w_desc_t      (xdma_pkg::xdma_req_w_desc_t ),
-      .axi_narrow_out_req_t   (axi_narrow_out_req_t        ),
-      .axi_narrow_out_resp_t  (axi_narrow_out_resp_t       )
+      .ReqFifoDepth           (3                                  ),
+      .addr_t                 (addr_t                             ),
+      .data_t                 (narrow_data_t                      ),
+      .strb_t                 (narrow_strb_t                      ),
+      .len_t                  (len_t                              ),
+      .xdma_req_idx_t         (xdma_pkg::xdma_narrow_req_idx_t    ),
+      .xdma_req_desc_t        (xdma_req_desc_t                    ),
+      .xdma_req_aw_desc_t     (xdma_pkg::xdma_req_aw_desc_t       ),
+      .xdma_req_w_desc_t      (xdma_pkg::xdma_req_w_desc_t        ),
+      .axi_narrow_out_req_t   (axi_narrow_out_req_t               ),
+      .axi_narrow_out_resp_t  (axi_narrow_out_resp_t              )
   ) i_xdma_narrow_req_backend (
       .clk_i                 (clk_i                      ),
       .rst_ni                (rst_ni                     ),
@@ -510,17 +510,17 @@ module xdma_axi_adapter_top
   logic wide_write_req_desc_valid;
   
   xdma_req_backend #(
-      .ReqFifoDepth           (3                           ),
-      .addr_t                 (addr_t                      ),
-      .data_t                 (wide_data_t                 ),
-      .strb_t                 (wide_strb_t                 ),
-      .len_t                  (len_t                       ),
-      .xdma_req_idx_t         (xdma_pkg::xdma_req_idx_t    ),
-      .xdma_req_desc_t        (xdma_req_desc_t             ),
-      .xdma_req_aw_desc_t     (xdma_pkg::xdma_req_aw_desc_t),
-      .xdma_req_w_desc_t      (xdma_pkg::xdma_req_w_desc_t ),
-      .axi_wide_out_req_t     (axi_wide_out_req_t          ),
-      .axi_wide_out_resp_t    (axi_wide_out_resp_t         )
+      .ReqFifoDepth           (3                                ),
+      .addr_t                 (addr_t                           ),
+      .data_t                 (wide_data_t                      ),
+      .strb_t                 (wide_strb_t                      ),
+      .len_t                  (len_t                            ),
+      .xdma_req_idx_t         (xdma_pkg::xdma_wide_req_idx_t    ),
+      .xdma_req_desc_t        (xdma_req_desc_t                  ),
+      .xdma_req_aw_desc_t     (xdma_pkg::xdma_req_aw_desc_t     ),
+      .xdma_req_w_desc_t      (xdma_pkg::xdma_req_w_desc_t      ),
+      .axi_wide_out_req_t     (axi_wide_out_req_t               ),
+      .axi_wide_out_resp_t    (axi_wide_out_resp_t              )
   ) i_xdma_wide_req_backend (
       .clk_i                 (clk_i                    ),
       .rst_ni                (rst_ni                   ),
@@ -772,7 +772,7 @@ module xdma_axi_adapter_top
   //-------------------------------------
   dw_converter #(
       .INPUT_DW          (xdma_pkg::AxiNarrowDataWidth),
-      .OUTPUT_DW         (xdma_pkg::AxiWideDataWidth  ),
+      .OUTPUT_DW         (xdma_pkg::AxiWideDataWidth  )
   ) i_cfg_dw_down_converter (
       .clk_i       (clk_i                     ),
       .rst_ni      (rst_ni                    ),
