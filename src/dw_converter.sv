@@ -45,10 +45,10 @@ module dw_converter #(
             .valid_o     (valid_o),
             .ready_i     (ready_i)
         );        
-    end else
+    end else begin
         // Not change, simple assign
         assign data_o  = data_i;
         assign valid_o = valid_i;
         assign ready_o = ready_i;
-
+    end
 endmodule
