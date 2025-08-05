@@ -230,7 +230,7 @@ module xdma_axi_adapter_top
       .rst_ni      (rst_ni                    ),
       .data_i      (to_remote_cfg_i           ),
       .valid_i     (to_remote_cfg_valid_i     ),
-      .ready_o     (to_remote_data_ready_o    ),
+      .ready_o     (to_remote_cfg_ready_o     ),
       .data_o      (to_remote_cfg_narrow      ),
       .valid_o     (to_remote_cfg_narrow_valid),
       .ready_i     (to_remote_cfg_narrow_ready)
