@@ -44,10 +44,16 @@ module xdma_axi_to_write #(
     logic           lock;
   } meta_t;
   axi_pkg::len_t w_cnt_d, w_cnt_q;
+  // Write meta
   logic wr_valid, wr_ready;
   meta_t wr_meta, wr_meta_d, wr_meta_q;
+  // meta
+  logic meta_valid, meta_ready;
+  meta_t meta;
+  // meta buf
+  logic meta_buf_valid, meta_buf_ready;
+  meta_t meta_buf;  
   assign busy_o   = axi_req_i.aw_valid | axi_req_i.w_valid | (w_cnt_q > 0);
-  assign wr_ready = reqrsp_rsp_i.q_ready;
   // Handle writes.
   always_comb begin
     // Default assignments
@@ -101,8 +107,8 @@ module xdma_axi_to_write #(
     reqrsp_req_o.data = (wr_meta.write) ? axi_req_i.w.data : '0;
     reqrsp_req_o.strb = (wr_meta.write) ? axi_req_i.w.strb : '0;
     reqrsp_req_o.size = wr_meta.size;
-    reqrsp_req_o.q_valid = wr_valid;
-    reqrsp_req_o.p_ready = 1'b1;
+    // reqrsp_req_o.q_valid = wr_valid;
+    // reqrsp_req_o.p_ready = 1'b1;
   end
 
 
@@ -128,44 +134,46 @@ module xdma_axi_to_write #(
     end
   end
 
-  // Simple B Response
-  // After we get the w last signal we send a B
-  // The state enum
-  logic b_valid;
-  typedef enum logic [0:0] {
-    IDLE,
-    B_SEND_VALID
-  } state_t;
-  state_t cur_state, next_state;
-  // State Update
-  always_ff @(posedge clk_i, negedge rst_ni) begin
-    if (!rst_ni) begin
-      cur_state <= IDLE;
-    end else begin
-      cur_state <= next_state;
-    end
-  end
-  // Next state logic
-  always_comb begin
-    next_state = cur_state;
-    case (cur_state)
-      // Any of the valid is high, the next state is busy
-      IDLE: if (wr_meta_d.last && wr_valid && wr_ready) next_state = B_SEND_VALID;
-      B_SEND_VALID: if (axi_req_i.b_ready) next_state = IDLE;
-    endcase
-  end
-  // Output logic
-  always_comb begin
-    b_valid = 1'b0;
-    case (cur_state)
-      IDLE: b_valid = 1'b0;
-      B_SEND_VALID: b_valid = 1'b1;
-    endcase
-  end
-  always_comb begin : proc_b_compose
-    axi_rsp_o.b = '0;
-    axi_rsp_o.b.id = wr_meta_q.id;
-    axi_rsp_o.b.resp = 2'b00;  // RESP_OK
-    axi_rsp_o.b_valid = b_valid;
-  end
+  // Fork write stream to meta data and memory requests
+  stream_fork #(
+    .N_OUP ( 32'd2 )
+  ) i_fork (
+    .clk_i   ( clk_i                               ),
+    .rst_ni  ( rst_ni                              ),
+    .valid_i ( wr_valid                            ),
+    .ready_o ( wr_ready                            ),
+    .valid_o ({meta_valid, reqrsp_req_o.q_valid}   ),
+    .ready_i ({meta_ready, reqrsp_rsp_i.q_ready}   )
+  );
+
+  assign meta = wr_meta;
+  stream_fifo #(
+    .FALL_THROUGH ( 1'b1             ),
+    .DEPTH        ( 32'd2            ),
+    .T            ( meta_t           )
+  ) i_meta_buf (
+    .clk_i      ( clk_i                       ),
+    .rst_ni     ( rst_ni                      ),
+    .flush_i    ( 1'b0                        ),
+    .testmode_i ( 1'b0                        ),
+    .data_i     ( meta                        ),
+    .valid_i    ( meta_valid && meta.last     ),
+    .ready_o    ( meta_ready                  ),
+    .data_o     ( meta_buf                    ),
+    .valid_o    ( meta_buf_valid              ),
+    .ready_i    ( meta_buf_ready              ),
+    .usage_o    ( /* unused */                )
+  );
+
+  assign axi_rsp_o.b_valid = meta_buf_valid;
+  assign meta_buf_ready = axi_req_i.b_ready;
+
+  // Compose B responses.
+  assign axi_rsp_o.b = '{
+    id:   meta_buf.id,
+    resp: 2'b00,
+    user: '0
+  };
+  // Tie to 0 the un-used ports
+  assign reqrsp_req_o.p_ready = 1'b0;
 endmodule
