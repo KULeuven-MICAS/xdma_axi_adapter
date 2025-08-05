@@ -22,23 +22,29 @@ module xdma_axi_adapter_top
     parameter type axi_wide_in_req_t         = logic,
     parameter type axi_wide_in_resp_t        = logic,
     // Narrow AXI Types
-    parameter type axi_narrow_id_t             = logic,
-    parameter type axi_narrow_out_req_t        = logic,
-    parameter type axi_narrow_out_resp_t       = logic,
-    parameter type axi_narrow_in_req_t         = logic,
-    parameter type axi_narrow_in_resp_t        = logic,
+    parameter type axi_narrow_id_t           = logic,
+    parameter type axi_narrow_out_req_t      = logic,
+    parameter type axi_narrow_out_resp_t     = logic,
+    parameter type axi_narrow_in_req_t       = logic,
+    parameter type axi_narrow_in_resp_t      = logic,
     // Reqrsp types
-    parameter type reqrsp_req_t         = logic,
-    parameter type reqrsp_rsp_t         = logic,
+    // Wide
+    parameter type reqrsp_wide_req_t         = logic,
+    parameter type reqrsp_wide_rsp_t         = logic,
+    // Narrow
+    parameter type reqrsp_narrow_req_t       = logic,
+    parameter type reqrsp_narrow_rsp_t       = logic,
     // Data types
-    parameter type data_t               = logic,
-    parameter type strb_t               = logic,
-    parameter type addr_t               = logic,
+    parameter type wide_data_t               = logic,
+    parameter type wide_strb_t               = logic,
+    parameter type narrow_data_t             = logic,
+    parameter type narrow_strb_t             = logic,
+    parameter type addr_t                    = logic,
     // XDMA type
     // Total dma length type
-    parameter type len_t                = logic,
+    parameter type len_t                     = logic,
     // Sender side
-    parameter type xdma_to_remote_cfg_t = logic,
+    parameter type xdma_to_remote_cfg_t      = logic,
     // typedef struct packed {
     //   first_frame_remaining_payload_t first_frame_remaining_payload;
     //   addr_t                          writer_addr;
@@ -439,9 +445,9 @@ module xdma_axi_adapter_top
       .clk_i(clk_i),
       .rst_ni(rst_ni),
       .inp_data_i({
-        data_t'(to_remote_cfg),
-        data_t'(to_remote_grant),
-        data_t'(to_remote_finish)
+        narrow_data_t'(to_remote_cfg),
+        narrow_data_t'(to_remote_grant),
+        narrow_data_t'(to_remote_finish)
       }),
       .inp_valid_i({
         to_remote_cfg_valid, to_remote_grant_valid, to_remote_finish_valid
@@ -625,13 +631,13 @@ module xdma_axi_adapter_top
   reqrsp_wide_rsp_t wide_receive_write_rsp;
   logic wide_receiver_busy;
   xdma_axi_to_write #(
-      .data_t       (data_t),
-      .addr_t       (addr_t),
-      .axi_id_t     (axi_wide_id_t),
-      .strb_t       (wide_strb_t),
-      .reqrsp_req_t (reqrsp_wide_req_t),
-      .reqrsp_rsp_t (reqrsp_wide_rsp_t),
-      .axi_in_req_t (axi_wide_in_req_t),
+      .data_t       (wide_data_t       ),
+      .addr_t       (addr_t            ),
+      .axi_id_t     (axi_wide_id_t     ),
+      .strb_t       (wide_strb_t       ),
+      .reqrsp_req_t (reqrsp_wide_req_t ),
+      .reqrsp_rsp_t (reqrsp_wide_rsp_t ),
+      .axi_in_req_t (axi_wide_in_req_t ),
       .axi_in_resp_t(axi_wide_in_resp_t)
   ) i_xdma_wide_receiver_axi_to_write (
       .clk_i       (clk_i),
@@ -656,13 +662,13 @@ module xdma_axi_adapter_top
   reqrsp_narrow_rsp_t narrow_receive_write_rsp;
   logic narrow_receiver_busy;
   xdma_axi_to_write #(
-      .data_t       (data_t),
-      .addr_t       (addr_t),
-      .axi_id_t     (axi_narrow_id_t),
-      .strb_t       (narrow_strb_t),
-      .reqrsp_req_t (reqrsp_narrow_req_t),
-      .reqrsp_rsp_t (reqrsp_narrow_rsp_t),
-      .axi_in_req_t (axi_narrow_in_req_t),
+      .data_t       (narrow_data_t       ),
+      .addr_t       (addr_t              ),
+      .axi_id_t     (axi_narrow_id_t     ),
+      .strb_t       (narrow_strb_t       ),
+      .reqrsp_req_t (reqrsp_narrow_req_t ),
+      .reqrsp_rsp_t (reqrsp_narrow_rsp_t ),
+      .axi_in_req_t (axi_narrow_in_req_t ),
       .axi_in_resp_t(axi_narrow_in_resp_t)
   ) i_xdma_narrow_receiver_axi_to_write (
       .clk_i       (clk_i),
@@ -828,15 +834,15 @@ module xdma_axi_adapter_top
   addr_t remote_addr;
   id_t   from_remote_dma_id;
   xdma_finish_manager #(
-      .id_t                                 (id_t),
-      .len_t                                (len_t),
-      .addr_t                               (addr_t),
-      .data_t                               (data_t),
-      .xdma_to_remote_data_accompany_cfg_t  (xdma_to_remote_data_accompany_cfg_t),
+      .id_t                                 (id_t                                 ),
+      .len_t                                (len_t                                ),
+      .addr_t                               (addr_t                               ),
+      .data_t                               (narrow_data_t                        ),
+      .xdma_to_remote_data_accompany_cfg_t  (xdma_to_remote_data_accompany_cfg_t  ),
       .xdma_from_remote_data_accompany_cfg_t(xdma_from_remote_data_accompany_cfg_t),
-      .xdma_req_desc_t                      (xdma_req_desc_t),
-      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t),
-      .xdma_from_remote_finish_t            (xdma_from_remote_finish_t)
+      .xdma_req_desc_t                      (xdma_req_desc_t                      ),
+      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t              ),
+      .xdma_from_remote_finish_t            (xdma_from_remote_finish_t            )
   ) i_xdma_finish_manager (
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),

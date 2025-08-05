@@ -67,8 +67,8 @@ package xdma_pkg;
   //   id_t                dma_id;
   // } xdma_inter_cluster_cfg_t;
 
-  typedef logic [AxiWideDataWidth-1:0] xdma_to_remote_wide_data_t;
-  typedef logic [AxiWideDataWidth-1:0] xdma_from_remote_wide_data_t;
+  typedef logic [AxiWideDataWidth-1:0] xdma_to_remote_data_t;
+  typedef logic [AxiWideDataWidth-1:0] xdma_from_remote_data_t;
 
 
   //--------------------------------------
@@ -195,7 +195,7 @@ package xdma_pkg;
     CfgIdx     = 2,
     DataIdx    = 3
   } xdma_addr_offset_idx_e;
-  
+
   typedef enum int unsigned {
     FromRemoteFinish = 0,
     FromRemoteGrant  = 1,
