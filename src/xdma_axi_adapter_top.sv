@@ -225,7 +225,7 @@ module xdma_axi_adapter_top
   dw_converter #(
       .INPUT_DW          (xdma_pkg::AxiWideDataWidth  ),
       .OUTPUT_DW         (xdma_pkg::AxiNarrowDataWidth)
-  ) i_cfg_dw_up_converter (
+  ) i_cfg_dw_down_converter (
       .clk_i       (clk_i                     ),
       .rst_ni      (rst_ni                    ),
       .data_i      (to_remote_cfg_i           ),
@@ -344,7 +344,7 @@ module xdma_axi_adapter_top
     if (!rst_ni) begin
       frame_length_holder <= '0;
     end else if (frame_length_holder_enable) begin
-      frame_length_holder <= to_remote_cfg_desc.dma_length;
+      frame_length_holder <= to_remote_cfg_i.frame_length;
     end
   end
 
@@ -368,7 +368,7 @@ module xdma_axi_adapter_top
       sIDLE: begin
         cfg_ready_to_transfer = to_remote_cfg_valid_i;
         frame_length_counter_clear = 1'b1;
-        if (to_remote_cfg_valid_i && to_remote_cfg_ready_o && to_remote_cfg_desc.dma_length > 1) begin
+        if (to_remote_cfg_valid_i && to_remote_cfg_ready_o && to_remote_cfg_i.frame_length > 1) begin
           // When the first frame is acknowledged, and the length is larger than 1, then the remaining several frames are not the header, so should not commit the new transfer
           frame_length_counter_clear   = 1'b0;
           frame_length_holder_enable   = 1'b1;
@@ -406,7 +406,7 @@ module xdma_axi_adapter_top
       .data_t         (wide_data_t),
       .xdma_req_desc_t(xdma_req_desc_t),
       .N_INP          (xdma_pkg::NUM_WIDE_INP)
-  ) i_wide_xdma_req_manager (
+  ) i_xdma_wide_req_manager (
       .clk_i      (clk_i),
       .rst_ni     (rst_ni),
       .inp_data_i (wide_data_t'(to_remote_data_i)),
@@ -441,19 +441,19 @@ module xdma_axi_adapter_top
       .data_t         (narrow_data_t),
       .xdma_req_desc_t(xdma_req_desc_t),
       .N_INP          (xdma_pkg::NUM_NARROW_INP)
-  ) i_xdma_req_manager (
+  ) i_xdma_narrow_req_manager (
       .clk_i(clk_i),
       .rst_ni(rst_ni),
       .inp_data_i({
-        narrow_data_t'(to_remote_cfg),
+        narrow_data_t'(to_remote_cfg_narrow),
         narrow_data_t'(to_remote_grant),
         narrow_data_t'(to_remote_finish)
       }),
       .inp_valid_i({
-        to_remote_cfg_valid, to_remote_grant_valid, to_remote_finish_valid
+        to_remote_cfg_narrow_valid, to_remote_grant_valid, to_remote_finish_valid
       }),
       .inp_ready_o({
-        to_remote_cfg_ready, to_remote_grant_ready, to_remote_finish_ready
+        to_remote_cfg_narrow_ready, to_remote_grant_ready, to_remote_finish_ready
       }),
       .inp_desc_i({
         to_remote_cfg_desc, to_remote_grant_desc, to_remote_finish_desc
@@ -495,7 +495,8 @@ module xdma_axi_adapter_top
       .write_req_data_valid_i(narrow_write_req_data_valid),
       .write_req_data_ready_o(narrow_write_req_data_ready),
       // Grant
-      .write_req_grant_i     (grant                      ),
+      // The control signal do not needs the grant signal
+      .write_req_grant_i     (1'b1                       ),
       // Req Done
       .write_req_done_i      (narrow_write_req_done      ),
       // Control Path
@@ -779,7 +780,7 @@ module xdma_axi_adapter_top
   dw_converter #(
       .INPUT_DW          (xdma_pkg::AxiNarrowDataWidth),
       .OUTPUT_DW         (xdma_pkg::AxiWideDataWidth  )
-  ) i_cfg_dw_down_converter (
+  ) i_cfg_dw_up_converter (
       .clk_i       (clk_i                     ),
       .rst_ni      (rst_ni                    ),
       .data_i      (from_remote_cfg           ),

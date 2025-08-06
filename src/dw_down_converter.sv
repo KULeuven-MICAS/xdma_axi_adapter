@@ -20,13 +20,8 @@ module dw_down_converter #(
     // Counter width must be at least $clog2(DOWN_RATIO)
     localparam int unsigned CNT_WIDTH = $clog2(DOWN_RATIO);
 
-    logic [CNT_WIDTH-1:0] count_q;
-    logic                 counter_en, counter_clr, counter_load, counter_down;
-    logic [CNT_WIDTH-1:0] counter_d;
-    logic                 counter_overflow;
-
-    logic [OUTPUT_DW-1:0] buffer_q;
-    logic                 buffer_valid_q, buffer_load;
+    logic [CNT_WIDTH-1:0] counter_q;
+    logic                 counter_en, counter_clr;
 
     // Counter instantiation
     counter #(
@@ -37,42 +32,63 @@ module dw_down_converter #(
         .rst_ni      (rst_ni),
         .clear_i     (counter_clr),
         .en_i        (counter_en),
-        .load_i      (counter_load),
-        .down_i      (counter_down),
-        .d_i         (counter_d),
-        .q_o         (count_q),
-        .overflow_o  (counter_overflow)
+        .load_i      (1'b0),
+        .down_i      (1'b0),
+        .d_i         ('0),
+        .q_o         (counter_q),
+        .overflow_o  (/* Not connect*/)
     );
 
-    // Load data into internal buffer
-    assign buffer_load = valid_i && ready_o;
 
-    always_ff @(posedge clk_i or negedge rst_ni) begin
+    typedef enum logic [1:0] {
+        IDLE,
+        BUSY
+    } state_t;
+    state_t cur_state, next_state;
+
+    // State Update
+    always_ff @(posedge clk_i, negedge rst_ni) begin
         if (!rst_ni) begin
-            buffer_q        <= '0;
-            buffer_valid_q  <= 1'b0;
-        end else if (buffer_load) begin
-            buffer_q        <= data_i;
-            buffer_valid_q  <= 1'b1;
-        end else if (counter_clr) begin
-            buffer_valid_q  <= 1'b0;
+            cur_state <= IDLE;
+        end else begin
+            cur_state <= next_state;
         end
     end
 
-    // Output logic
-    assign data_o = buffer_q[INPUT_DW * count_q +: INPUT_DW];
-    assign valid_o = buffer_valid_q;
-
-    // Handshake control
-    assign ready_o = !buffer_valid_q || (valid_o && ready_i && (count_q == DOWN_RATIO - 1));
-
-    // Counter control
+    // Next state logic
     always_comb begin
-        counter_en   = valid_o && ready_i;
-        counter_clr  = counter_en && (count_q == DOWN_RATIO - 1);
-        counter_load = 1'b0;
-        counter_d    = '0;
-        counter_down = 1'b0;
+        next_state = cur_state;
+        case (cur_state)
+        // Any of the valid is high, the next state is busy
+        IDLE: if (valid_i) next_state = BUSY;
+        BUSY: if ((counter_q == DOWN_RATIO - 1)) next_state = IDLE;
+        endcase
+    end
+
+    // Output logic
+    always_comb begin
+        // Default values
+        ready_o = 1'b0;
+        valid_o = 1'b0;
+        data_o = '0;
+        counter_en = 1'b0;
+        counter_clr = 1'b0;
+        case (cur_state)
+        IDLE: begin
+            data_o = '0;
+            valid_o = 1'b0;
+            ready_o = 1'b0;
+            counter_en = 1'b0;
+            counter_clr = 1'b1;
+        end
+        BUSY: begin
+            data_o = data_i[OUTPUT_DW * counter_q +: OUTPUT_DW];
+            valid_o = 1'b1;
+            ready_o = ready_i && (counter_q == DOWN_RATIO - 1);
+            counter_en = ready_i;
+            counter_clr = ready_i && (counter_q == DOWN_RATIO - 1);
+        end
+        endcase
     end
 
     initial begin
