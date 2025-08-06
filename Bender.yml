@@ -16,6 +16,9 @@ sources:
   - src/xdma_pkg.sv
   # Level 1
   - src/find_first_one_idx.sv
+  - src/dw_up_converter.sv
+  - src/dw_down_converter.sv
+  - src/dw_converter.sv
   # Level 2
   - src/xdma_req_manager.sv
   - src/xdma_grant_manager.sv
