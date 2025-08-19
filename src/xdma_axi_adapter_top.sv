@@ -864,6 +864,4 @@ module xdma_axi_adapter_top
     to_remote_finish.from = cluster_base_addr_i;
   end
 
-
-
 endmodule : xdma_axi_adapter_top
