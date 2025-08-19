@@ -165,7 +165,7 @@ module xdma_axi_to_write #(
     .usage_o    ( /* unused */                )
   );
 
-  assign axi_rsp_o.b_valid = meta_buf_valid;
+  assign axi_rsp_o.b_valid = wr_valid;
   assign meta_buf_ready = axi_req_i.b_ready;
 
   // Compose B responses.

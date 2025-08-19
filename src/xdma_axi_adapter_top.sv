@@ -824,8 +824,11 @@ module xdma_axi_adapter_top
       .data_o    (receive_grant_cur),
       .pop_i     (grant_fifo_pop)
   );
+  // xdma_write_finish from xdma_finish_manager to pop out grant signals
+  logic xdma_write_finish;
+
   assign grant = !grant_fifo_empty;
-  assign grant_fifo_pop = !grant_fifo_empty & xdma_finish_o;
+  assign grant_fifo_pop = !grant_fifo_empty & xdma_write_finish;
   assign from_remote_grant_ready = !grant_fifo_full;
   assign grant_fifo_push = from_remote_grant_valid & !grant_fifo_full;
 
@@ -848,6 +851,7 @@ module xdma_axi_adapter_top
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),
       .xdma_finish_o                   (xdma_finish_o),
+      .xdma_write_finish_o             (xdma_write_finish),
       .to_remote_data_accompany_cfg_i  (to_remote_data_accompany_cfg_i),
       .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg_i),
       .from_remote_finish_i            (from_remote_finish),
