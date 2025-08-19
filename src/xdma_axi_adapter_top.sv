@@ -16,35 +16,35 @@ module xdma_axi_adapter_top
   import xdma_pkg::*;
 #(
     // Wide AXI Types
-    parameter type axi_wide_id_t             = logic,
-    parameter type axi_wide_out_req_t        = logic,
-    parameter type axi_wide_out_resp_t       = logic,
-    parameter type axi_wide_in_req_t         = logic,
-    parameter type axi_wide_in_resp_t        = logic,
+    parameter type axi_wide_id_t         = logic,
+    parameter type axi_wide_out_req_t    = logic,
+    parameter type axi_wide_out_resp_t   = logic,
+    parameter type axi_wide_in_req_t     = logic,
+    parameter type axi_wide_in_resp_t    = logic,
     // Narrow AXI Types
-    parameter type axi_narrow_id_t           = logic,
-    parameter type axi_narrow_out_req_t      = logic,
-    parameter type axi_narrow_out_resp_t     = logic,
-    parameter type axi_narrow_in_req_t       = logic,
-    parameter type axi_narrow_in_resp_t      = logic,
+    parameter type axi_narrow_id_t       = logic,
+    parameter type axi_narrow_out_req_t  = logic,
+    parameter type axi_narrow_out_resp_t = logic,
+    parameter type axi_narrow_in_req_t   = logic,
+    parameter type axi_narrow_in_resp_t  = logic,
     // Reqrsp types
     // Wide
-    parameter type reqrsp_wide_req_t         = logic,
-    parameter type reqrsp_wide_rsp_t         = logic,
+    parameter type reqrsp_wide_req_t     = logic,
+    parameter type reqrsp_wide_rsp_t     = logic,
     // Narrow
-    parameter type reqrsp_narrow_req_t       = logic,
-    parameter type reqrsp_narrow_rsp_t       = logic,
+    parameter type reqrsp_narrow_req_t   = logic,
+    parameter type reqrsp_narrow_rsp_t   = logic,
     // Data types
-    parameter type wide_data_t               = logic,
-    parameter type wide_strb_t               = logic,
-    parameter type narrow_data_t             = logic,
-    parameter type narrow_strb_t             = logic,
-    parameter type addr_t                    = logic,
+    parameter type wide_data_t           = logic,
+    parameter type wide_strb_t           = logic,
+    parameter type narrow_data_t         = logic,
+    parameter type narrow_strb_t         = logic,
+    parameter type addr_t                = logic,
     // XDMA type
     // Total dma length type
-    parameter type len_t                     = logic,
+    parameter type len_t                 = logic,
     // Sender side
-    parameter type xdma_to_remote_cfg_t      = logic,
+    parameter type xdma_to_remote_cfg_t  = logic,
     // typedef struct packed {
     //   first_frame_remaining_payload_t first_frame_remaining_payload;
     //   addr_t                          writer_addr;
@@ -218,23 +218,23 @@ module xdma_axi_adapter_top
   // we need the 64bit cfg
   // but the xdma requires the 512bit CFG
   // ==> we use the narrow axi to burst 8 times
-  narrow_data_t           to_remote_cfg_narrow;
-  logic                   to_remote_cfg_narrow_valid;
-  logic                   to_remote_cfg_narrow_ready;
+  narrow_data_t to_remote_cfg_narrow;
+  logic         to_remote_cfg_narrow_valid;
+  logic         to_remote_cfg_narrow_ready;
   // First we need the dw converter for the cfg from 512->64
   dw_converter #(
-      .INPUT_DW          (xdma_pkg::AxiWideDataWidth  ),
-      .OUTPUT_DW         (xdma_pkg::AxiNarrowDataWidth)
+      .INPUT_DW (xdma_pkg::AxiWideDataWidth),
+      .OUTPUT_DW(xdma_pkg::AxiNarrowDataWidth)
   ) i_cfg_dw_down_converter (
-      .clk_i       (clk_i                     ),
-      .rst_ni      (rst_ni                    ),
-      .data_i      (to_remote_cfg_i           ),
-      .valid_i     (to_remote_cfg_valid_i     ),
-      .ready_o     (to_remote_cfg_ready_o     ),
-      .data_o      (to_remote_cfg_narrow      ),
-      .valid_o     (to_remote_cfg_narrow_valid),
-      .ready_i     (to_remote_cfg_narrow_ready)
-  );  
+      .clk_i  (clk_i),
+      .rst_ni (rst_ni),
+      .data_i (to_remote_cfg_i),
+      .valid_i(to_remote_cfg_valid_i),
+      .ready_o(to_remote_cfg_ready_o),
+      .data_o (to_remote_cfg_narrow),
+      .valid_o(to_remote_cfg_narrow_valid),
+      .ready_i(to_remote_cfg_narrow_ready)
+  );
   // To remote grant
   xdma_to_remote_grant_t  to_remote_grant;
   logic                   to_remote_grant_valid;
@@ -410,17 +410,17 @@ module xdma_axi_adapter_top
       .clk_i      (clk_i),
       .rst_ni     (rst_ni),
       .inp_data_i (wide_data_t'(to_remote_data_i)),
-      .inp_valid_i(to_remote_data_valid_i        ),
-      .inp_ready_o(to_remote_data_ready_o        ),
-      .inp_desc_i (to_remote_data_desc           ),
-      .oup_data_o (wide_write_req_data           ),
-      .oup_valid_o(wide_write_req_valid          ),
-      .oup_ready_i(wide_write_req_ready          ),
-      .oup_desc_o (wide_write_req_desc           ),
-      .idx_o      (wide_write_req_idx            ),
-      .start_o    (wide_write_req_start          ),
-      .busy_o     (wide_write_req_busy           ),
-      .done_i     (wide_write_req_done           )
+      .inp_valid_i(to_remote_data_valid_i),
+      .inp_ready_o(to_remote_data_ready_o),
+      .inp_desc_i (to_remote_data_desc),
+      .oup_data_o (wide_write_req_data),
+      .oup_valid_o(wide_write_req_valid),
+      .oup_ready_i(wide_write_req_ready),
+      .oup_desc_o (wide_write_req_desc),
+      .idx_o      (wide_write_req_idx),
+      .start_o    (wide_write_req_start),
+      .busy_o     (wide_write_req_busy),
+      .done_i     (wide_write_req_done)
   );
 
 
@@ -449,23 +449,17 @@ module xdma_axi_adapter_top
         narrow_data_t'(to_remote_grant),
         narrow_data_t'(to_remote_finish)
       }),
-      .inp_valid_i({
-        to_remote_cfg_narrow_valid, to_remote_grant_valid, to_remote_finish_valid
-      }),
-      .inp_ready_o({
-        to_remote_cfg_narrow_ready, to_remote_grant_ready, to_remote_finish_ready
-      }),
-      .inp_desc_i({
-        to_remote_cfg_desc, to_remote_grant_desc, to_remote_finish_desc
-      }),
-      .oup_data_o (narrow_write_req_data),
+      .inp_valid_i({to_remote_cfg_narrow_valid, to_remote_grant_valid, to_remote_finish_valid}),
+      .inp_ready_o({to_remote_cfg_narrow_ready, to_remote_grant_ready, to_remote_finish_ready}),
+      .inp_desc_i({to_remote_cfg_desc, to_remote_grant_desc, to_remote_finish_desc}),
+      .oup_data_o(narrow_write_req_data),
       .oup_valid_o(narrow_write_req_valid),
       .oup_ready_i(narrow_write_req_ready),
-      .oup_desc_o (narrow_write_req_desc),
-      .idx_o      (narrow_write_req_idx),
-      .start_o    (narrow_write_req_start),
-      .busy_o     (narrow_write_req_busy),
-      .done_i     (narrow_write_req_done)
+      .oup_desc_o(narrow_write_req_desc),
+      .idx_o(narrow_write_req_idx),
+      .start_o(narrow_write_req_start),
+      .busy_o(narrow_write_req_busy),
+      .done_i(narrow_write_req_done)
   );
   ////--------------------------------------
   // Req Backend
@@ -476,36 +470,36 @@ module xdma_axi_adapter_top
   logic narrow_write_req_data_ready;
   logic narrow_write_req_desc_valid;
   xdma_req_backend #(
-      .ReqFifoDepth           (3                                  ),
-      .addr_t                 (addr_t                             ),
-      .data_t                 (narrow_data_t                      ),
-      .strb_t                 (narrow_strb_t                      ),
-      .len_t                  (len_t                              ),
-      .xdma_req_idx_t         (xdma_pkg::xdma_narrow_req_idx_t    ),
-      .xdma_req_desc_t        (xdma_req_desc_t                    ),
-      .xdma_req_aw_desc_t     (xdma_pkg::xdma_req_aw_desc_t       ),
-      .xdma_req_w_desc_t      (xdma_pkg::xdma_req_w_desc_t        ),
-      .axi_out_req_t          (axi_narrow_out_req_t               ),
-      .axi_out_resp_t         (axi_narrow_out_resp_t              )
+      .ReqFifoDepth      (3),
+      .addr_t            (addr_t),
+      .data_t            (narrow_data_t),
+      .strb_t            (narrow_strb_t),
+      .len_t             (len_t),
+      .xdma_req_idx_t    (xdma_pkg::xdma_narrow_req_idx_t),
+      .xdma_req_desc_t   (xdma_req_desc_t),
+      .xdma_req_aw_desc_t(xdma_pkg::xdma_req_aw_desc_t),
+      .xdma_req_w_desc_t (xdma_pkg::xdma_req_w_desc_t),
+      .axi_out_req_t     (axi_narrow_out_req_t),
+      .axi_out_resp_t    (axi_narrow_out_resp_t)
   ) i_xdma_narrow_req_backend (
-      .clk_i                 (clk_i                      ),
-      .rst_ni                (rst_ni                     ),
+      .clk_i                 (clk_i),
+      .rst_ni                (rst_ni),
       // Data Path
-      .write_req_data_i      (narrow_write_req_data      ),
+      .write_req_data_i      (narrow_write_req_data),
       .write_req_data_valid_i(narrow_write_req_data_valid),
       .write_req_data_ready_o(narrow_write_req_data_ready),
       // Grant
       // The control signal do not needs the grant signal
-      .write_req_grant_i     (1'b1                       ),
+      .write_req_grant_i     (1'b1),
       // Req Done
-      .write_req_done_i      (narrow_write_req_done      ),
+      .write_req_done_i      (narrow_write_req_done),
       // Control Path
-      .write_req_idx_i       (narrow_write_req_idx       ),
-      .write_req_desc_i      (narrow_write_req_desc      ),
+      .write_req_idx_i       (narrow_write_req_idx),
+      .write_req_desc_i      (narrow_write_req_desc),
       .write_req_desc_valid_i(narrow_write_req_desc_valid),
       // AXI interface
-      .axi_dma_req_o         (axi_xdma_narrow_out_req_o  ),
-      .axi_dma_resp_i        (axi_xdma_narrow_out_resp_i )
+      .axi_dma_req_o         (axi_xdma_narrow_out_req_o),
+      .axi_dma_resp_i        (axi_xdma_narrow_out_resp_i)
   );
   assign narrow_write_req_data_valid = narrow_write_req_valid;
   assign narrow_write_req_desc_valid = narrow_write_req_desc.ready_to_transfer;
@@ -515,37 +509,37 @@ module xdma_axi_adapter_top
   logic wide_write_req_data_valid;
   logic wide_write_req_data_ready;
   logic wide_write_req_desc_valid;
-  
+
   xdma_req_backend #(
-      .ReqFifoDepth           (3                                ),
-      .addr_t                 (addr_t                           ),
-      .data_t                 (wide_data_t                      ),
-      .strb_t                 (wide_strb_t                      ),
-      .len_t                  (len_t                            ),
-      .xdma_req_idx_t         (xdma_pkg::xdma_wide_req_idx_t    ),
-      .xdma_req_desc_t        (xdma_req_desc_t                  ),
-      .xdma_req_aw_desc_t     (xdma_pkg::xdma_req_aw_desc_t     ),
-      .xdma_req_w_desc_t      (xdma_pkg::xdma_req_w_desc_t      ),
-      .axi_out_req_t          (axi_wide_out_req_t               ),
-      .axi_out_resp_t         (axi_wide_out_resp_t              )
+      .ReqFifoDepth      (3),
+      .addr_t            (addr_t),
+      .data_t            (wide_data_t),
+      .strb_t            (wide_strb_t),
+      .len_t             (len_t),
+      .xdma_req_idx_t    (xdma_pkg::xdma_wide_req_idx_t),
+      .xdma_req_desc_t   (xdma_req_desc_t),
+      .xdma_req_aw_desc_t(xdma_pkg::xdma_req_aw_desc_t),
+      .xdma_req_w_desc_t (xdma_pkg::xdma_req_w_desc_t),
+      .axi_out_req_t     (axi_wide_out_req_t),
+      .axi_out_resp_t    (axi_wide_out_resp_t)
   ) i_xdma_wide_req_backend (
-      .clk_i                 (clk_i                    ),
-      .rst_ni                (rst_ni                   ),
+      .clk_i                 (clk_i),
+      .rst_ni                (rst_ni),
       // Data Path
-      .write_req_data_i      (wide_write_req_data      ),
+      .write_req_data_i      (wide_write_req_data),
       .write_req_data_valid_i(wide_write_req_data_valid),
       .write_req_data_ready_o(wide_write_req_data_ready),
       // Grant
-      .write_req_grant_i     (grant                    ),
+      .write_req_grant_i     (grant),
       // Req Done
-      .write_req_done_i      (wide_write_req_done      ),
+      .write_req_done_i      (wide_write_req_done),
       // Control Path
-      .write_req_idx_i       (wide_write_req_idx       ),
-      .write_req_desc_i      (wide_write_req_desc      ),
+      .write_req_idx_i       (wide_write_req_idx),
+      .write_req_desc_i      (wide_write_req_desc),
       .write_req_desc_valid_i(wide_write_req_desc_valid),
       // AXI interface
-      .axi_dma_req_o         (axi_xdma_wide_out_req_o  ),
-      .axi_dma_resp_i        (axi_xdma_wide_out_resp_i )
+      .axi_dma_req_o         (axi_xdma_wide_out_req_o),
+      .axi_dma_resp_i        (axi_xdma_wide_out_resp_i)
   );
   assign wide_write_req_data_valid = wide_write_req_valid;
   assign wide_write_req_desc_valid = wide_write_req_desc.ready_to_transfer;
@@ -568,9 +562,9 @@ module xdma_axi_adapter_top
   logic narrow_write_happening;
   assign narrow_write_happening = axi_xdma_narrow_out_req_o.w_valid & axi_xdma_narrow_out_resp_i.w_ready;
   xdma_meta_manager #(
-      .xdma_req_meta_t  (xdma_req_meta_t),
-      .len_t            (len_t          ),
-      .id_t             (id_t           )
+      .xdma_req_meta_t(xdma_req_meta_t),
+      .len_t          (len_t),
+      .id_t           (id_t)
   ) i_xdma_narrow_meta_manager (
       .clk_i            (clk_i),
       .rst_ni           (rst_ni),
@@ -580,7 +574,7 @@ module xdma_axi_adapter_top
       .cur_dma_id_o     (narrow_cur_dma_id),
       // From AXI handshake
       .write_happening_i(narrow_write_happening)
-  );  
+  );
 
   // Wide Req Meta Manager
   xdma_req_meta_t wide_write_req_meta;
@@ -592,9 +586,9 @@ module xdma_axi_adapter_top
   logic wide_write_happening;
   assign wide_write_happening = axi_xdma_wide_out_req_o.w_valid & axi_xdma_wide_out_resp_i.w_ready;
   xdma_meta_manager #(
-      .xdma_req_meta_t  (xdma_req_meta_t),
-      .len_t            (len_t          ),
-      .id_t             (id_t           )
+      .xdma_req_meta_t(xdma_req_meta_t),
+      .len_t          (len_t),
+      .id_t           (id_t)
   ) i_xdma_wide_meta_manager (
       .clk_i            (clk_i),
       .rst_ni           (rst_ni),
@@ -632,13 +626,13 @@ module xdma_axi_adapter_top
   reqrsp_wide_rsp_t wide_receive_write_rsp;
   logic wide_receiver_busy;
   xdma_axi_to_write #(
-      .data_t       (wide_data_t       ),
-      .addr_t       (addr_t            ),
-      .axi_id_t     (axi_wide_id_t     ),
-      .strb_t       (wide_strb_t       ),
-      .reqrsp_req_t (reqrsp_wide_req_t ),
-      .reqrsp_rsp_t (reqrsp_wide_rsp_t ),
-      .axi_in_req_t (axi_wide_in_req_t ),
+      .data_t       (wide_data_t),
+      .addr_t       (addr_t),
+      .axi_id_t     (axi_wide_id_t),
+      .strb_t       (wide_strb_t),
+      .reqrsp_req_t (reqrsp_wide_req_t),
+      .reqrsp_rsp_t (reqrsp_wide_rsp_t),
+      .axi_in_req_t (axi_wide_in_req_t),
       .axi_in_resp_t(axi_wide_in_resp_t)
   ) i_xdma_wide_receiver_axi_to_write (
       .clk_i       (clk_i),
@@ -663,13 +657,13 @@ module xdma_axi_adapter_top
   reqrsp_narrow_rsp_t narrow_receive_write_rsp;
   logic narrow_receiver_busy;
   xdma_axi_to_write #(
-      .data_t       (narrow_data_t       ),
-      .addr_t       (addr_t              ),
-      .axi_id_t     (axi_narrow_id_t     ),
-      .strb_t       (narrow_strb_t       ),
-      .reqrsp_req_t (reqrsp_narrow_req_t ),
-      .reqrsp_rsp_t (reqrsp_narrow_rsp_t ),
-      .axi_in_req_t (axi_narrow_in_req_t ),
+      .data_t       (narrow_data_t),
+      .addr_t       (addr_t),
+      .axi_id_t     (axi_narrow_id_t),
+      .strb_t       (narrow_strb_t),
+      .reqrsp_req_t (reqrsp_narrow_req_t),
+      .reqrsp_rsp_t (reqrsp_narrow_rsp_t),
+      .axi_in_req_t (axi_narrow_in_req_t),
       .axi_in_resp_t(axi_narrow_in_resp_t)
   ) i_xdma_narrow_receiver_axi_to_write (
       .clk_i       (clk_i),
@@ -753,43 +747,33 @@ module xdma_axi_adapter_top
       .rule_t(rule_t)
   ) i_xdma_receiver_write_demux_narrow (
       // Input side
-      .inp_addr_i(narrow_receive_write_req.addr),
-      .addr_map_i(xdma_narrow_rules),
-      .inp_data_i(narrow_receive_write_req.data),
+      .inp_addr_i (narrow_receive_write_req.addr),
+      .addr_map_i (xdma_narrow_rules),
+      .inp_data_i (narrow_receive_write_req.data),
       .inp_valid_i(narrow_receive_write_req.q_valid),
       .inp_ready_o(narrow_receive_write_rsp.q_ready),
       // Outpu side
-      .oup_data_o({from_remote_cfg,
-                   from_remote_grant,
-                   from_remote_finish}),
-      .oup_valid_o({
-        from_remote_cfg_valid,
-        from_remote_grant_valid,
-        from_remote_finish_valid
-      }),
-      .oup_ready_i({
-        from_remote_cfg_ready,
-        from_remote_grant_ready,
-        from_remote_finish_ready
-      })
+      .oup_data_o ({from_remote_cfg, from_remote_grant, from_remote_finish}),
+      .oup_valid_o({from_remote_cfg_valid, from_remote_grant_valid, from_remote_finish_valid}),
+      .oup_ready_i({from_remote_cfg_ready, from_remote_grant_ready, from_remote_finish_ready})
   );
 
   //-------------------------------------
   // Receive CFG DW Converter
   //-------------------------------------
   dw_converter #(
-      .INPUT_DW          (xdma_pkg::AxiNarrowDataWidth),
-      .OUTPUT_DW         (xdma_pkg::AxiWideDataWidth  )
+      .INPUT_DW (xdma_pkg::AxiNarrowDataWidth),
+      .OUTPUT_DW(xdma_pkg::AxiWideDataWidth)
   ) i_cfg_dw_up_converter (
-      .clk_i       (clk_i                     ),
-      .rst_ni      (rst_ni                    ),
-      .data_i      (from_remote_cfg           ),
-      .valid_i     (from_remote_cfg_valid     ),
-      .ready_o     (from_remote_cfg_ready     ),
-      .data_o      (from_remote_cfg_o         ),
-      .valid_o     (from_remote_cfg_valid_o   ),
-      .ready_i     (from_remote_cfg_ready_i   )
-  );  
+      .clk_i  (clk_i),
+      .rst_ni (rst_ni),
+      .data_i (from_remote_cfg),
+      .valid_i(from_remote_cfg_valid),
+      .ready_o(from_remote_cfg_ready),
+      .data_o (from_remote_cfg_o),
+      .valid_o(from_remote_cfg_valid_o),
+      .ready_i(from_remote_cfg_ready_i)
+  );
   //-------------------------------------
   // Receive Grant FIFO
   //-------------------------------------
@@ -824,8 +808,11 @@ module xdma_axi_adapter_top
       .data_o    (receive_grant_cur),
       .pop_i     (grant_fifo_pop)
   );
+  // xdma_write_finish from xdma_finish_manager to pop out grant signals
+  logic xdma_write_finish;
+
   assign grant = !grant_fifo_empty;
-  assign grant_fifo_pop = !grant_fifo_empty & xdma_finish_o;
+  assign grant_fifo_pop = !grant_fifo_empty & xdma_write_finish;
   assign from_remote_grant_ready = !grant_fifo_full;
   assign grant_fifo_push = from_remote_grant_valid & !grant_fifo_full;
 
@@ -835,19 +822,20 @@ module xdma_axi_adapter_top
   addr_t remote_addr;
   id_t   from_remote_dma_id;
   xdma_finish_manager #(
-      .id_t                                 (id_t                                 ),
-      .len_t                                (len_t                                ),
-      .addr_t                               (addr_t                               ),
-      .data_t                               (narrow_data_t                        ),
-      .xdma_to_remote_data_accompany_cfg_t  (xdma_to_remote_data_accompany_cfg_t  ),
+      .id_t                                 (id_t),
+      .len_t                                (len_t),
+      .addr_t                               (addr_t),
+      .data_t                               (narrow_data_t),
+      .xdma_to_remote_data_accompany_cfg_t  (xdma_to_remote_data_accompany_cfg_t),
       .xdma_from_remote_data_accompany_cfg_t(xdma_from_remote_data_accompany_cfg_t),
-      .xdma_req_desc_t                      (xdma_req_desc_t                      ),
-      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t              ),
-      .xdma_from_remote_finish_t            (xdma_from_remote_finish_t            )
+      .xdma_req_desc_t                      (xdma_req_desc_t),
+      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t),
+      .xdma_from_remote_finish_t            (xdma_from_remote_finish_t)
   ) i_xdma_finish_manager (
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),
       .xdma_finish_o                   (xdma_finish_o),
+      .xdma_write_finish_o             (xdma_write_finish),
       .to_remote_data_accompany_cfg_i  (to_remote_data_accompany_cfg_i),
       .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg_i),
       .from_remote_finish_i            (from_remote_finish),
@@ -875,7 +863,5 @@ module xdma_axi_adapter_top
     to_remote_finish.dma_id = from_remote_dma_id;
     to_remote_finish.from = cluster_base_addr_i;
   end
-
-
 
 endmodule : xdma_axi_adapter_top

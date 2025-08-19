@@ -24,7 +24,10 @@ module xdma_finish_manager #(
     /// Asynchronous reset, active low
     input  logic                                 rst_ni,
     /// Status Signal
+    // The XDMA finish indicator, connect to XDMA Frontend. Only becomes high at first XDMA (Write / ChainWrite)
     output logic                                 xdma_finish_o,
+    // The XDMA remote write finish indicator, connect to grant_manager. Becomes high for the whole chain
+    output logic                                 xdma_write_finish_o,
     /// to remote
     input  xdma_to_remote_data_accompany_cfg_t   to_remote_data_accompany_cfg_i,
     /// from remote accompany cfg
@@ -140,10 +143,10 @@ module xdma_finish_manager #(
   end
 
   // Two signals to send the write finish to XDMACtrl
-  logic write_finish_valid, write_finish_ready;
+  logic first_write_finish_valid, first_write_finish_ready;
   always_comb begin
     first_write_next_state = first_write_current_state;
-    write_finish_valid = 1'b0;
+    first_write_finish_valid = 1'b0;
     to_remote_dma_id_en = 1'b0;
     case (first_write_current_state)
       WriteFirstIdle: begin
@@ -157,8 +160,8 @@ module xdma_finish_manager #(
       end
       WriteFirstBusy: begin
         if (from_remote_finish_valid_i && from_remote_finish.dma_id == to_remote_dma_id_q) begin
-          write_finish_valid = 1'b1;
-          if (write_finish_ready) begin
+          first_write_finish_valid = 1'b1;
+          if (first_write_finish_ready) begin
             first_write_next_state = WriteFirstIdle;
           end else begin
             first_write_next_state = WriteFirstFinish;
@@ -166,8 +169,8 @@ module xdma_finish_manager #(
         end
       end
       WriteFirstFinish: begin
-        write_finish_valid = 1'b1;
-        if (write_finish_ready) begin
+        first_write_finish_valid = 1'b1;
+        if (first_write_finish_ready) begin
           first_write_next_state = WriteFirstIdle;
         end
       end
@@ -178,10 +181,10 @@ module xdma_finish_manager #(
   end
 
   // The simple arbitration signal for read_finish, write_finish to xdma_finish_o (finish arbitration)
-  assign xdma_finish_o = read_finish_valid | write_finish_valid;
+  assign xdma_finish_o = read_finish_valid | first_write_finish_valid;
   always_comb begin
     if (read_finish_valid) read_finish_ready = '1;
-    else if (write_finish_valid) write_finish_ready = '1;
+    else if (first_write_finish_valid) first_write_finish_ready = '1;
   end
 
   // Third FSM: Middle / Last Write
@@ -193,6 +196,8 @@ module xdma_finish_manager #(
     end
   end
 
+  logic middle_last_write_finish_valid;
+
   assign remote_addr_o = from_remote_addr_q;
   assign from_remote_dma_id_o = from_remote_dma_id_q;
 
@@ -201,6 +206,7 @@ module xdma_finish_manager #(
     from_remote_dma_id_en = 1'b0;
     from_remote_addr_en = 1'b0;
     to_remote_finish_valid_o = 1'b0;
+    middle_last_write_finish_valid = 1'b0;
 
     case (last_write_current_state)
       WriteMiddleLastIdle: begin
@@ -233,6 +239,7 @@ module xdma_finish_manager #(
       SendToPreviousHop: begin
         to_remote_finish_valid_o = 1'b1;
         if (to_remote_finish_ready_i) begin
+          middle_last_write_finish_valid = 1'b1;
           last_write_next_state = WriteMiddleLastIdle;
         end
       end
@@ -244,5 +251,7 @@ module xdma_finish_manager #(
 
   // Assign from_remote_finish_ready_o signal
   assign from_remote_finish_ready_o = last_write_current_state == WriteMiddleBusy | first_write_current_state == WriteFirstBusy;
+  // Assign xdma_write_finish_o signal
+  assign xdma_write_finish_o = middle_last_write_finish_valid | first_write_finish_valid;
 
 endmodule
