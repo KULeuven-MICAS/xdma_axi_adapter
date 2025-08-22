@@ -183,6 +183,8 @@ module xdma_finish_manager #(
   // The simple arbitration signal for read_finish, write_finish to xdma_finish_o (finish arbitration)
   assign xdma_finish_o = read_finish_valid | first_write_finish_valid;
   always_comb begin
+    read_finish_ready = '0;
+    first_write_finish_ready = '0;
     if (read_finish_valid) read_finish_ready = '1;
     else if (first_write_finish_valid) first_write_finish_ready = '1;
   end
