@@ -62,10 +62,11 @@ module xdma_finish_manager #(
     WriteFirstFinish
   } xdma_first_write_status_t;
 
-  typedef enum logic [1:0] {
+  typedef enum logic [2:0] {
     WriteMiddleLastIdle,
     WriteMiddleBusy,
     WriteLastBusy,
+    WriteLastFinish,
     SendToPreviousHop
   } xdma_last_write_status_t;
 
@@ -235,7 +236,13 @@ module xdma_finish_manager #(
       end
       WriteLastBusy: begin
         if (~from_remote_data_accompany_cfg_i.ready_to_transfer) begin
-          last_write_next_state = SendToPreviousHop;
+          last_write_next_state = WriteLastFinish;
+        end
+      end
+      WriteLastFinish: begin
+        to_remote_finish_valid_o = 1'b1;
+        if (to_remote_finish_ready_i) begin
+          last_write_next_state = WriteMiddleLastIdle;
         end
       end
       SendToPreviousHop: begin
@@ -254,6 +261,10 @@ module xdma_finish_manager #(
   // Assign from_remote_finish_ready_o signal
   assign from_remote_finish_ready_o = last_write_current_state == WriteMiddleBusy | first_write_current_state == WriteFirstBusy;
   // Assign xdma_write_finish_o signal
+  // This signal is used to the grant_manager to release the reserved entry
+  // There are two conditions to release the entry:
+  // 1. The first write node (the first CW of a write task)
+  // 2. The intermediate node in CW
   assign xdma_write_finish_o = middle_last_write_finish_valid | first_write_finish_valid;
 
 endmodule
