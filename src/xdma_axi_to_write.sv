@@ -134,6 +134,8 @@ module xdma_axi_to_write #(
     end
   end
 
+  logic reqrsp_q_valid, reqrsp_q_ready;
+
   // Fork write stream to meta data and memory requests
   stream_fork #(
     .N_OUP ( 32'd2 )
@@ -142,10 +144,11 @@ module xdma_axi_to_write #(
     .rst_ni  ( rst_ni                              ),
     .valid_i ( wr_valid                            ),
     .ready_o ( wr_ready                            ),
-    .valid_o ({meta_valid, reqrsp_req_o.q_valid}   ),
-    .ready_i ({meta_ready, reqrsp_rsp_i.q_ready}   )
+    .valid_o ({meta_valid, reqrsp_q_valid}   ),
+    .ready_i ({meta_ready, reqrsp_q_ready}   )
   );
 
+  // Stream 1: Buffer meta data for b channel response
   assign meta = wr_meta;
   stream_fifo #(
     .FALL_THROUGH ( 1'b1             ),
@@ -174,6 +177,18 @@ module xdma_axi_to_write #(
     resp: 2'b00,
     user: '0
   };
+
+  // Stream 2: reqrsp request output, with write mode + strobe =0 requests popped
+  always_comb begin
+    if (reqrsp_q_valid && reqrsp_req_o.write && (reqrsp_req_o.strb == '0)) begin
+      reqrsp_req_o.q_valid = 1'b0;
+      reqrsp_q_ready = 1'b1;
+    end else begin
+      reqrsp_req_o.q_valid = reqrsp_q_valid;
+      reqrsp_q_ready = reqrsp_rsp_i.q_ready;
+    end
+  end
+
   // Tie to 0 the un-used ports
   assign reqrsp_req_o.p_ready = 1'b0;
 endmodule
