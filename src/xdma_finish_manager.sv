@@ -44,8 +44,9 @@ module xdma_finish_manager #(
     input  logic  to_remote_finish_ready_i
 );
 
-  // Convert data_t to xdma_to_remote_grant_t
-  xdma_pkg::xdma_to_remote_finish_t from_remote_finish;
+  // Cast the data-bus payload back to its struct view (uses the type the
+  // caller passes via parameter — no xdma_pkg dependency).
+  xdma_from_remote_finish_t from_remote_finish;
   assign from_remote_finish = from_remote_finish_i;
 
 

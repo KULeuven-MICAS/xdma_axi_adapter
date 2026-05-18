@@ -2,7 +2,60 @@
 `include "axi/typedef.svh"
 `include "axi/assign.svh"
 module tb_xdma_axi_adapter_top ();
-  import xdma_pkg::*;
+  // Standalone-test typedefs. xdma_pkg has been retired; this tb owns
+  // its own protocol typedefs (mirrors the adapter's body).
+  localparam int unsigned TbMaxMemSizeKiB    = 32'd4096;
+  localparam int unsigned TbWordlineWidth    = 32'd64;
+  localparam int unsigned TbAxiAddrWidth     = 32'd48;
+  localparam int unsigned TbAxiWideDataWidth = 32'd512;
+  localparam int unsigned TbXDMAIdWidth       = 32'd4;
+  localparam int unsigned TbTotalFrameWidth  = 32'd4;
+  localparam int unsigned TbDMALengthWidth   =
+      $clog2(TbMaxMemSizeKiB) + 10 - $clog2(TbWordlineWidth/8);
+  localparam int unsigned TbFirstFrameRemainingPayloadWidth =
+      TbAxiWideDataWidth - 1 - TbTotalFrameWidth - TbXDMAIdWidth - 2*TbAxiAddrWidth;
+
+  typedef logic [TbXDMAIdWidth-1:0]                          tb_id_t;
+  typedef logic [TbAxiAddrWidth-1:0]                        tb_addr_t;
+  typedef logic [TbAxiWideDataWidth-1:0]                    tb_wide_data_t;
+  typedef logic [TbTotalFrameWidth-1:0]                     tb_frame_length_t;
+  typedef logic [TbFirstFrameRemainingPayloadWidth-1:0]     tb_first_frame_remaining_payload_t;
+  typedef logic [TbDMALengthWidth-1:0]                      tb_len_t;
+
+  typedef struct packed {
+    tb_first_frame_remaining_payload_t first_frame_remaining_payload;
+    tb_addr_t                          writer_addr;
+    tb_addr_t                          reader_addr;
+    tb_id_t                            dma_id;
+    tb_frame_length_t                  frame_length;
+    logic                              dma_type;
+  } tb_xdma_inter_cluster_cfg_t;
+  typedef tb_wide_data_t tb_xdma_to_remote_data_t;
+  typedef tb_wide_data_t tb_xdma_from_remote_data_t;
+
+  typedef struct packed { int unsigned idx; tb_addr_t start_addr; tb_addr_t end_addr; } tb_rule_t;
+
+  typedef struct packed {
+    tb_id_t   dma_id;
+    logic     dma_type;
+    tb_addr_t src_addr;
+    tb_addr_t dst_addr;
+    tb_len_t  dma_length;
+    logic     ready_to_transfer;
+    logic     is_first_cw;
+    logic     is_last_cw;
+  } tb_xdma_accompany_cfg_t;
+  typedef struct packed {
+    tb_id_t   dma_id;
+    logic     dma_type;
+    tb_addr_t remote_addr;
+    tb_len_t  dma_length;
+    logic     ready_to_transfer;
+  } tb_xdma_req_desc_t;
+  typedef struct packed {
+    tb_id_t  dma_id;
+    tb_len_t dma_length;
+  } tb_xdma_req_meta_t;
   ///---------------------
   /// AXI XBAR
   ///---------------------
@@ -13,8 +66,8 @@ module tb_xdma_axi_adapter_top ();
   localparam int unsigned TbPipeline = 32'd1;
   localparam int unsigned TbWideIdWidthIn = 32'd8;
   localparam bit TbUniqueIds = 1'b0;
-  localparam int unsigned TbAxiAddrWidth = 32'd48;
-  localparam int unsigned TbAxiDataWidth = 32'd512;
+  // TbAxiAddrWidth/TbAxiWideDataWidth declared at the top of the tb.
+  localparam int unsigned TbAxiDataWidth = TbAxiWideDataWidth;
   localparam int unsigned TbAxiStrbWidth = TbAxiDataWidth / 8;
   localparam int unsigned TbWideIdWidthOut = $clog2(TbNumMasters) + TbWideIdWidthIn;
 
@@ -27,7 +80,7 @@ module tb_xdma_axi_adapter_top ();
   `AXI_TYPEDEF_ALL(axi_mst_dma, addr_t, id_dma_mst_t, data_dma_t, strb_dma_t, user_dma_t)
   `AXI_TYPEDEF_ALL(axi_slv_dma, addr_t, id_dma_slv_t, data_dma_t, strb_dma_t, user_dma_t)
 
-  typedef xdma_pkg::rule_t xbar_rule_t;
+  typedef tb_rule_t xbar_rule_t;
 
   localparam axi_pkg::xbar_cfg_t DmaXbarCfg = '{
       NoSlvPorts: TbNumMasters,
@@ -130,57 +183,46 @@ module tb_xdma_axi_adapter_top ();
   /// TO REMOTE
   ///---------------------
   // to remote cfg
-  xdma_pkg::xdma_inter_cluster_cfg_t [TbNumClusters-1:0] xdma_to_remote_cfg;
+  tb_xdma_inter_cluster_cfg_t [TbNumClusters-1:0] xdma_to_remote_cfg;
   logic [TbNumClusters-1:0] xdma_to_remote_cfg_valid;
   logic [TbNumClusters-1:0] xdma_to_remote_cfg_ready;
   // to remote data
-  xdma_pkg::xdma_to_remote_data_t [TbNumClusters-1:0] xdma_to_remote_data;
+  tb_xdma_to_remote_data_t [TbNumClusters-1:0] xdma_to_remote_data;
   logic [TbNumClusters-1:0] xdma_to_remote_data_valid;
   logic [TbNumClusters-1:0] xdma_to_remote_data_ready;
   // to remote accompany cfg
-  xdma_pkg::xdma_accompany_cfg_t [TbNumClusters-1:0] xdma_to_remote_data_accompany_cfg;
+  tb_xdma_accompany_cfg_t [TbNumClusters-1:0] xdma_to_remote_data_accompany_cfg;
   ///---------------------
   /// FROM REMOTE
   ///---------------------
   // from remote cfg
-  xdma_pkg::xdma_inter_cluster_cfg_t [TbNumClusters-1:0] xdma_from_remote_cfg;
+  tb_xdma_inter_cluster_cfg_t [TbNumClusters-1:0] xdma_from_remote_cfg;
   logic [TbNumClusters-1:0] xdma_from_remote_cfg_valid;
   logic [TbNumClusters-1:0] xdma_from_remote_cfg_ready;
   // from remote data
-  xdma_pkg::xdma_from_remote_data_t [TbNumClusters-1:0] xdma_from_remote_data;
+  tb_xdma_from_remote_data_t [TbNumClusters-1:0] xdma_from_remote_data;
   logic [TbNumClusters-1:0] xdma_from_remote_data_valid;
   logic [TbNumClusters-1:0] xdma_from_remote_data_ready;
   // from remote data accompany cfg
-  xdma_pkg::xdma_accompany_cfg_t [TbNumClusters-1:0] xdma_from_remote_data_accompany_cfg;
+  tb_xdma_accompany_cfg_t [TbNumClusters-1:0] xdma_from_remote_data_accompany_cfg;
 
-  // AXI adapter tops
+  // AXI adapter tops — slim API: only meta params + AXI types + cluster cfgs.
   xdma_axi_adapter_top #(
-      .axi_id_t                             (id_dma_slv_t),
-      .axi_out_req_t                        (axi_mst_dma_req_t),
-      .axi_out_resp_t                       (axi_mst_dma_resp_t),
-      .axi_in_req_t                         (axi_slv_dma_req_t),
-      .axi_in_resp_t                        (axi_slv_dma_resp_t),
-      .reqrsp_req_t                         (xdma_pkg::reqrsp_req_t),
-      .reqrsp_rsp_t                         (xdma_pkg::reqrsp_rsp_t),
-      .data_t                               (xdma_pkg::data_t),
-      .strb_t                               (xdma_pkg::strb_t),
-      .addr_t                               (xdma_pkg::addr_t),
-      .len_t                                (xdma_pkg::len_t),
-      .xdma_to_remote_cfg_t                 (xdma_pkg::xdma_inter_cluster_cfg_t),
-      .xdma_to_remote_data_t                (xdma_pkg::xdma_to_remote_data_t),
-      .xdma_to_remote_data_accompany_cfg_t  (xdma_pkg::xdma_accompany_cfg_t),
-      .xdma_req_desc_t                      (xdma_pkg::xdma_req_desc_t),
-      .xdma_req_meta_t                      (xdma_pkg::xdma_req_meta_t),
-      .xdma_to_remote_grant_t               (xdma_pkg::xdma_to_remote_grant_t),
-      .xdma_from_remote_grant_t             (xdma_pkg::xdma_from_remote_grant_t),
-      .xdma_from_remote_cfg_t               (xdma_pkg::xdma_inter_cluster_cfg_t),
-      .xdma_from_remote_data_t              (xdma_pkg::xdma_from_remote_data_t),
-      .xdma_from_remote_data_accompany_cfg_t(xdma_pkg::xdma_accompany_cfg_t),
-      .ClusterBaseAddr                      (ClusterBaseAddr),
-      .ClusterAddressSpace                  (ClusterAddressSpace),
-      .MainMemBaseAddr                      (MainMemBaseAddr),
-      .MainMemEndAddr                       (MainEndBaseAddr),
-      .MMIOSize                             (MMIOSize)
+      // Meta
+      .MaxMemSizeKiB         (TbMaxMemSizeKiB),
+      .WordlineWidth         (TbWordlineWidth),
+      // System AXI types (tb wires only the wide bus; narrow uses defaults)
+      .WideAXIIdWidth        ($bits(id_dma_slv_t)),
+      .axi_wide_out_req_t    (axi_mst_dma_req_t),
+      .axi_wide_out_resp_t   (axi_mst_dma_resp_t),
+      .axi_wide_in_req_t     (axi_slv_dma_req_t),
+      .axi_wide_in_resp_t    (axi_slv_dma_resp_t),
+      // Cluster cfgs
+      .ClusterBaseAddr       (ClusterBaseAddr),
+      .ClusterAddressSpace   (ClusterAddressSpace),
+      .MainMemBaseAddr       (MainMemBaseAddr),
+      .MainMemEndAddr        (MainEndBaseAddr),
+      .MMIOSize              (MMIOSize)
   ) i_xdma_axi_adapter_0 (
       .clk_i                           (clk),
       .rst_ni                          (rst_n),
@@ -215,32 +257,21 @@ module tb_xdma_axi_adapter_top ();
   );
 
   xdma_axi_adapter_top #(
-      .axi_id_t                             (id_dma_slv_t),
-      .axi_out_req_t                        (axi_mst_dma_req_t),
-      .axi_out_resp_t                       (axi_mst_dma_resp_t),
-      .axi_in_req_t                         (axi_slv_dma_req_t),
-      .axi_in_resp_t                        (axi_slv_dma_resp_t),
-      .reqrsp_req_t                         (xdma_pkg::reqrsp_req_t),
-      .reqrsp_rsp_t                         (xdma_pkg::reqrsp_rsp_t),
-      .data_t                               (xdma_pkg::data_t),
-      .strb_t                               (xdma_pkg::strb_t),
-      .addr_t                               (xdma_pkg::addr_t),
-      .len_t                                (xdma_pkg::len_t),
-      .xdma_to_remote_cfg_t                 (xdma_pkg::xdma_inter_cluster_cfg_t),
-      .xdma_to_remote_data_t                (xdma_pkg::xdma_to_remote_data_t),
-      .xdma_to_remote_data_accompany_cfg_t  (xdma_pkg::xdma_accompany_cfg_t),
-      .xdma_req_desc_t                      (xdma_pkg::xdma_req_desc_t),
-      .xdma_req_meta_t                      (xdma_pkg::xdma_req_meta_t),
-      .xdma_to_remote_grant_t               (xdma_pkg::xdma_to_remote_grant_t),
-      .xdma_from_remote_grant_t             (xdma_pkg::xdma_from_remote_grant_t),
-      .xdma_from_remote_cfg_t               (xdma_pkg::xdma_inter_cluster_cfg_t),
-      .xdma_from_remote_data_t              (xdma_pkg::xdma_from_remote_data_t),
-      .xdma_from_remote_data_accompany_cfg_t(xdma_pkg::xdma_accompany_cfg_t),
-      .ClusterBaseAddr                      (ClusterBaseAddr),
-      .ClusterAddressSpace                  (ClusterAddressSpace),
-      .MainMemBaseAddr                      (MainMemBaseAddr),
-      .MainMemEndAddr                       (MainEndBaseAddr),
-      .MMIOSize                             (MMIOSize)
+      // Meta
+      .MaxMemSizeKiB         (TbMaxMemSizeKiB),
+      .WordlineWidth         (TbWordlineWidth),
+      // System AXI types
+      .WideAXIIdWidth        ($bits(id_dma_slv_t)),
+      .axi_wide_out_req_t    (axi_mst_dma_req_t),
+      .axi_wide_out_resp_t   (axi_mst_dma_resp_t),
+      .axi_wide_in_req_t     (axi_slv_dma_req_t),
+      .axi_wide_in_resp_t    (axi_slv_dma_resp_t),
+      // Cluster cfgs
+      .ClusterBaseAddr       (ClusterBaseAddr),
+      .ClusterAddressSpace   (ClusterAddressSpace),
+      .MainMemBaseAddr       (MainMemBaseAddr),
+      .MainMemEndAddr        (MainEndBaseAddr),
+      .MMIOSize              (MMIOSize)
   ) i_xdma_axi_adapter_1 (
       .clk_i                           (clk),
       .rst_ni                          (rst_n),
@@ -356,7 +387,7 @@ module tb_xdma_axi_adapter_top ();
 
   task automatic read_send_data;
 
-    xdma_pkg::data_t local_mem[$];
+    tb_wide_data_t local_mem[$];
     int dma_length = 100;
     for (int i = 1; i <= dma_length; i++) begin
       local_mem.push_back(1024 + i);
@@ -424,7 +455,7 @@ module tb_xdma_axi_adapter_top ();
   endtask
 
   task automatic write_send_data;
-    xdma_pkg::data_t local_mem[$];
+    tb_wide_data_t local_mem[$];
     int dma_length = 100;
     for (int i = 1; i <= dma_length; i++) begin
       local_mem.push_back(1024 + i);

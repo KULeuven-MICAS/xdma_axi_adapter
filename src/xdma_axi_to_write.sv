@@ -10,7 +10,7 @@ module xdma_axi_to_write #(
     ///
     parameter type data_t        = logic,
     parameter type addr_t        = logic,
-    parameter type axi_id_t      = logic,
+    parameter int unsigned AxiIdWidth = 1,
     parameter type strb_t        = logic,
     /// Reqrsp request channel type.
     parameter type reqrsp_req_t  = logic,
@@ -34,14 +34,14 @@ module xdma_axi_to_write #(
     input  reqrsp_rsp_t  reqrsp_rsp_i
 );
   typedef struct packed {
-    addr_t          addr;
-    axi_pkg::atop_t atop;
-    axi_id_t        id;
-    logic           last;
-    axi_pkg::qos_t  qos;
-    axi_pkg::size_t size;
-    logic           write;
-    logic           lock;
+    addr_t                   addr;
+    axi_pkg::atop_t          atop;
+    logic [AxiIdWidth-1:0]   id;
+    logic                    last;
+    axi_pkg::qos_t           qos;
+    axi_pkg::size_t          size;
+    logic                    write;
+    logic                    lock;
   } meta_t;
   axi_pkg::len_t w_cnt_d, w_cnt_q;
   // Write meta
@@ -103,12 +103,11 @@ module xdma_axi_to_write #(
   always_comb begin : proc_req_compose
     reqrsp_req_o.addr = wr_meta.addr;
     reqrsp_req_o.write = wr_meta.write;
-    reqrsp_req_o.amo = xdma_pkg::AMONone;
+    // Drive `amo` with the AMONone encoding directly (`'0`).
+    reqrsp_req_o.amo = '0;
     reqrsp_req_o.data = (wr_meta.write) ? axi_req_i.w.data : '0;
     reqrsp_req_o.strb = (wr_meta.write) ? axi_req_i.w.strb : '0;
     reqrsp_req_o.size = wr_meta.size;
-    // reqrsp_req_o.q_valid = wr_valid;
-    // reqrsp_req_o.p_ready = 1'b1;
   end
 
 
