@@ -44,16 +44,8 @@ module xdma_finish_manager #(
     input  logic  to_remote_finish_ready_i
 );
 
-  // Cast the narrow data-bus payload back to the wire-level finish frame
-  // struct. The sender (xdma_axi_adapter_top) packs the frame as
-  // xdma_to_remote_finish_t, which includes the `reserved` padding to fill
-  // narrow_data_t. We must decode with the SAME type — using
-  // xdma_from_remote_finish_t (which omits `reserved`) silently truncates
-  // the upper 12 bits and shifts {dma_id, from} so the dma_id check below
-  // never matches, hanging the host on XDMA_FINISH_REMOTE_TASK_PTR.
   xdma_to_remote_finish_t from_remote_finish;
   assign from_remote_finish = from_remote_finish_i;
-
 
   // Status that need the pull up xdma_finish_o: Read task, The first hop of a write task
   typedef enum logic [1:0] {
