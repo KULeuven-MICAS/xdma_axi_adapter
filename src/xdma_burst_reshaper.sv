@@ -39,8 +39,6 @@ module xdma_burst_reshaper #(
     // Narrow adapter leaves the default `'0` to preserve the pre-refactor
     // behaviour (the original code compared against `xdma_pkg::ToRemoteData`,
     // which in the narrow encoding aliases to `ToRemoteFinish`).
-    // Both enums live in xdma_axi_adapter_top.sv's
-    // `// Generated parameters & typedefs` block.
     parameter xdma_req_idx_t WriteDataIdx = '0,
     // Dependent Parameters
     parameter int unsigned DataWidth = $bits(data_t),  //512
