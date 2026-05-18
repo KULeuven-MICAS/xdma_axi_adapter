@@ -991,8 +991,7 @@ module xdma_axi_adapter_top
       .xdma_to_remote_data_accompany_cfg_t  (xdma_to_remote_data_accompany_cfg_t),
       .xdma_from_remote_data_accompany_cfg_t(xdma_from_remote_data_accompany_cfg_t),
       .xdma_req_desc_t                      (xdma_req_desc_t),
-      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t),
-      .xdma_from_remote_finish_t            (xdma_from_remote_finish_t)
+      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t)
   ) i_xdma_finish_manager (
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),
