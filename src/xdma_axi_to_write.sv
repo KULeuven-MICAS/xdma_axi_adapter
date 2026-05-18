@@ -2,9 +2,7 @@
 // Yunhao Deng <yunhao.deng@kuleuven.be>
 
 // In XDMA we only need the aw/w to transfer data/cfg
-module xdma_axi_to_write
-  import reqrsp_pkg::AMONone;
-#(
+module xdma_axi_to_write #(
     /// AXI4+ATOP request type. See `include/axi/typedef.svh`.
     parameter type axi_in_req_t  = logic,
     /// AXI4+ATOP response type. See `include/axi/typedef.svh`.
@@ -105,10 +103,13 @@ module xdma_axi_to_write
   always_comb begin : proc_req_compose
     reqrsp_req_o.addr = wr_meta.addr;
     reqrsp_req_o.write = wr_meta.write;
-    // amo is an enum; assign the named AMONone (== 4'h0) to avoid the
-    // SV `Illegal assignment to type ... amo_op_e from type 'reg'` warning
-    // (vsim-8386) that `'0` triggers on an enum target.
-    reqrsp_req_o.amo = AMONone;
+    // `amo` is an `amo_op_e` enum field inside reqrsp_req_t (the type
+    // comes via parameter; reqrsp_pkg is not in this package's Bender
+    // dependency graph, so we cannot name AMONone here). `'0` matches
+    // AMONone (4'h0) but the simulator emits vsim-8386 on enum<-'reg
+    // assignment; suppressed at vsim invocation, see HeMAiA's
+    // target/sim/sim_*.hjson.
+    reqrsp_req_o.amo = '0;
     reqrsp_req_o.data = (wr_meta.write) ? axi_req_i.w.data : '0;
     reqrsp_req_o.strb = (wr_meta.write) ? axi_req_i.w.strb : '0;
     reqrsp_req_o.size = wr_meta.size;
