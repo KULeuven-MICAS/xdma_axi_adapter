@@ -794,6 +794,7 @@ module xdma_axi_adapter_top
       .strb_t       (wide_strb_t),
       .reqrsp_req_t (reqrsp_wide_req_t),
       .reqrsp_rsp_t (reqrsp_wide_rsp_t),
+      .amo_op_e_t   (amo_op_e),
       .axi_in_req_t (axi_wide_in_req_t),
       .axi_in_resp_t(axi_wide_in_resp_t)
   ) i_xdma_wide_receiver_axi_to_write (
@@ -825,6 +826,7 @@ module xdma_axi_adapter_top
       .strb_t       (narrow_strb_t),
       .reqrsp_req_t (reqrsp_narrow_req_t),
       .reqrsp_rsp_t (reqrsp_narrow_rsp_t),
+      .amo_op_e_t   (amo_op_e),
       .axi_in_req_t (axi_narrow_in_req_t),
       .axi_in_resp_t(axi_narrow_in_resp_t)
   ) i_xdma_narrow_receiver_axi_to_write (
