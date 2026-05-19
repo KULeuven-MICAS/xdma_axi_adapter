@@ -10,7 +10,7 @@ module xdma_axi_to_write #(
     ///
     parameter type data_t        = logic,
     parameter type addr_t        = logic,
-    parameter type axi_id_t      = logic,
+    parameter int unsigned AxiIdWidth = 1,
     parameter type strb_t        = logic,
     /// Reqrsp request channel type.
     parameter type reqrsp_req_t  = logic,
@@ -33,15 +33,38 @@ module xdma_axi_to_write #(
     /// Reqrsp respone channel.
     input  reqrsp_rsp_t  reqrsp_rsp_i
 );
+  //--------------------------------------
+  // Reqrsp Type for Standalone Test
+  //--------------------------------------
+  // Local mirror of reqrsp_pkg::amo_op_e — xdma_axi_adapter is not a
+  // Bender dependent of snitch_cluster's reqrsp_interface, so we cannot
+  // import the package here. Using a named enum value (AMONone) keeps the
+  // assignment to `reqrsp_req_o.amo` a legal enum-to-enum write and
+  // avoids the vsim-8386 warning that `'0` would trigger.
+  typedef enum logic [3:0] {
+    AMONone = 4'h0,
+    AMOSwap = 4'h1,
+    AMOAdd  = 4'h2,
+    AMOAnd  = 4'h3,
+    AMOOr   = 4'h4,
+    AMOXor  = 4'h5,
+    AMOMax  = 4'h6,
+    AMOMaxu = 4'h7,
+    AMOMin  = 4'h8,
+    AMOMinu = 4'h9,
+    AMOLR   = 4'hA,
+    AMOSC   = 4'hB
+  } amo_op_e;
+
   typedef struct packed {
-    addr_t          addr;
-    axi_pkg::atop_t atop;
-    axi_id_t        id;
-    logic           last;
-    axi_pkg::qos_t  qos;
-    axi_pkg::size_t size;
-    logic           write;
-    logic           lock;
+    addr_t                   addr;
+    axi_pkg::atop_t          atop;
+    logic [AxiIdWidth-1:0]   id;
+    logic                    last;
+    axi_pkg::qos_t           qos;
+    axi_pkg::size_t          size;
+    logic                    write;
+    logic                    lock;
   } meta_t;
   axi_pkg::len_t w_cnt_d, w_cnt_q;
   // Write meta
@@ -103,12 +126,13 @@ module xdma_axi_to_write #(
   always_comb begin : proc_req_compose
     reqrsp_req_o.addr = wr_meta.addr;
     reqrsp_req_o.write = wr_meta.write;
-    reqrsp_req_o.amo = xdma_pkg::AMONone;
+    // `amo` is an `amo_op_e` enum field in reqrsp_req_t. Assigning a
+    // named local enum value keeps it a legal enum-to-enum write and
+    // avoids vsim-8386 on `'0`. AMONone == 4'h0 mirrors reqrsp_pkg.
+    reqrsp_req_o.amo = AMONone;
     reqrsp_req_o.data = (wr_meta.write) ? axi_req_i.w.data : '0;
     reqrsp_req_o.strb = (wr_meta.write) ? axi_req_i.w.strb : '0;
     reqrsp_req_o.size = wr_meta.size;
-    // reqrsp_req_o.q_valid = wr_valid;
-    // reqrsp_req_o.p_ready = 1'b1;
   end
 
 

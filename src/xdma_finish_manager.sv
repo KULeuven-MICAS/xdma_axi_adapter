@@ -15,7 +15,6 @@ module xdma_finish_manager #(
     parameter type         xdma_from_remote_data_accompany_cfg_t = logic,
     parameter type         xdma_req_desc_t                       = logic,
     parameter type         xdma_to_remote_finish_t               = logic,
-    parameter type         xdma_from_remote_finish_t             = logic,
     //Dependent parameter
     parameter int unsigned LenWidth                              = $bits(len_t)
 ) (
@@ -38,16 +37,14 @@ module xdma_finish_manager #(
     input  logic                                 from_remote_finish_valid_i,
     output logic                                 from_remote_finish_ready_o,
 
-    output addr_t remote_addr_o,
-    output id_t   from_remote_dma_id_o,
-    output logic  to_remote_finish_valid_o,
-    input  logic  to_remote_finish_ready_i
+    output addr_t                                remote_addr_o,
+    output id_t                                  from_remote_dma_id_o,
+    output logic                                 to_remote_finish_valid_o,
+    input  logic                                 to_remote_finish_ready_i
 );
 
-  // Convert data_t to xdma_to_remote_grant_t
-  xdma_pkg::xdma_to_remote_finish_t from_remote_finish;
+  xdma_to_remote_finish_t from_remote_finish;
   assign from_remote_finish = from_remote_finish_i;
-
 
   // Status that need the pull up xdma_finish_o: Read task, The first hop of a write task
   typedef enum logic [1:0] {

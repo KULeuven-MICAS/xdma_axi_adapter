@@ -33,6 +33,13 @@ module xdma_burst_reshaper #(
     //     logic                               is_write_data;
     // } xdma_req_w_desc_t;
     parameter type xdma_req_w_desc_t = logic,
+    // The xdma_req_idx_t value that gates the AW/W-channel write-data path.
+    // Wide adapter passes `ToRemoteData` (value 0 in xdma_wide_to_remote_idx_e
+    // — the only wide entry, so the gate is always-active for wide writes).
+    // Narrow adapter leaves the default `'0` to preserve the pre-refactor
+    // behaviour (the original code compared against `xdma_pkg::ToRemoteData`,
+    // which in the narrow encoding aliases to `ToRemoteFinish`).
+    parameter xdma_req_idx_t WriteDataIdx = '0,
     // Dependent Parameters
     parameter int unsigned DataWidth = $bits(data_t),  //512
     parameter int unsigned StrbWidth = DataWidth / 8,  //64
@@ -146,7 +153,9 @@ module xdma_burst_reshaper #(
 
   logic [7:0] num_beats;
   logic is_write_data;
-  assign is_write_data =  (write_req_idx_i==xdma_pkg::ToRemoteData) && (write_req_desc_i.dma_type);
+  // Gates the AW/W write-data path; see `WriteDataIdx` declaration above for
+  // the wide vs narrow contract.
+  assign is_write_data =  (write_req_idx_i==WriteDataIdx) && (write_req_desc_i.dma_type);
   assign num_beats = (lens_counter_q >= MaxNumBeats) ? MaxNumBeats : lens_counter_q;
   always_comb begin : proc_pack_write_req
     //-----------------------

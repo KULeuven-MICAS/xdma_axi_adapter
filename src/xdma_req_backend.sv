@@ -36,6 +36,11 @@ module xdma_req_backend #(
     //     logic                               is_write_data;
     // } xdma_req_w_desc_t;
     parameter type xdma_req_w_desc_t  = logic,
+    // The xdma_req_idx_t value that identifies a write-data burst. Passed
+    // through to xdma_burst_reshaper; see its declaration for the full
+    // rationale. Caller (xdma_axi_adapter_top) supplies the appropriate
+    // enum literal (`ToRemoteData` for the wide instance).
+    parameter xdma_req_idx_t WriteDataIdx = '0,
 
     /// Enable or disable tracing
     parameter bit  DmaTracing     = 0,
@@ -84,7 +89,8 @@ module xdma_req_backend #(
       .xdma_req_idx_t    (xdma_req_idx_t),
       .xdma_req_desc_t   (xdma_req_desc_t),
       .xdma_req_aw_desc_t(xdma_req_aw_desc_t),
-      .xdma_req_w_desc_t (xdma_req_w_desc_t)
+      .xdma_req_w_desc_t (xdma_req_w_desc_t),
+      .WriteDataIdx      (WriteDataIdx)
   ) i_xdma_burst_reshaper (
       .clk_i                 (clk_i),
       .rst_ni                (rst_ni),

@@ -13,164 +13,322 @@
 // - from_remote_data_accompany_cfg
 // Only use the aw/w from the axi interface
 module xdma_axi_adapter_top
-  import xdma_pkg::*;
 #(
-    // Wide AXI Types
-    parameter type axi_wide_id_t         = logic,
+    //==========================================================
+    // Meta parameters — set by the user, define the system-level constants
+    //==========================================================
+    // Largest XDMA-addressable region (KiB).
+    // -> Chisel: XDMACrossClusterParam.tcdmSize
+    parameter int unsigned MaxMemSizeKiB      = 32'd4096,
+    // TCDM bank wordline width (bits).
+    // -> Chisel: XDMACrossClusterParam.wordlineWidth
+    parameter int unsigned WordlineWidth      = 32'd64,
+    // System AXI address width.
+    parameter int unsigned AxiAddrWidth       = 32'd48,
+    // Wide AXI data width.
+    parameter int unsigned AxiWideDataWidth   = 32'd512,
+    // Narrow AXI data width
+    parameter int unsigned AxiNarrowDataWidth = 32'd64,
+    // ChipIdWidth: which chip on the inter-chip mesh.
+    // XDMAIdWidth: which in-flight XDMA *task* the payload belongs to —
+    //              distinct from the AXI-channel ID below (WideAXIIdWidth /
+    //              NarrowAXIIdWidth). This one lives inside the
+    //              cross-cluster payload structs (xdma_inter_cluster_cfg_t,
+    //              xdma_*_grant_t, xdma_*_finish_t, xdma_accompany_cfg_t,
+    //              xdma_req_meta_t) and bounds the number of concurrent
+    //              DMA tasks the XDMA can track.
+    parameter int unsigned ChipIdWidth        = 32'd8,
+    parameter int unsigned XDMAIdWidth        = 32'd4,
+    // Cross-cluster cfg frame-count width
+    parameter int unsigned TotalFrameWidth    = 32'd4,
+    // System AXI ID widths
+    parameter int unsigned WideAXIIdWidth     = 32'd1,
+    parameter int unsigned NarrowAXIIdWidth   = 32'd1,
+    //==========================================================
+    // System-level AXI types — depend on caller's id/user widths
+    //==========================================================
+    // Wide
     parameter type axi_wide_out_req_t    = logic,
     parameter type axi_wide_out_resp_t   = logic,
     parameter type axi_wide_in_req_t     = logic,
     parameter type axi_wide_in_resp_t    = logic,
-    // Narrow AXI Types
-    parameter type axi_narrow_id_t       = logic,
+    // Narrow
     parameter type axi_narrow_out_req_t  = logic,
     parameter type axi_narrow_out_resp_t = logic,
     parameter type axi_narrow_in_req_t   = logic,
     parameter type axi_narrow_in_resp_t  = logic,
-    // Reqrsp types
-    // Wide
-    parameter type reqrsp_wide_req_t     = logic,
-    parameter type reqrsp_wide_rsp_t     = logic,
-    // Narrow
-    parameter type reqrsp_narrow_req_t   = logic,
-    parameter type reqrsp_narrow_rsp_t   = logic,
-    // Data types
-    parameter type wide_data_t           = logic,
-    parameter type wide_strb_t           = logic,
-    parameter type narrow_data_t         = logic,
-    parameter type narrow_strb_t         = logic,
-    parameter type addr_t                = logic,
-    // XDMA type
-    // Total dma length type
-    parameter type len_t                 = logic,
-    // Sender side
-    parameter type xdma_to_remote_cfg_t  = logic,
-    // typedef struct packed {
-    //   first_frame_remaining_payload_t first_frame_remaining_payload;
-    //   addr_t                          writer_addr;
-    //   addr_t                          reader_addr;
 
-    //   id_t           dma_id;
-    //   frame_length_t frame_length;
-    //   // The dma_type
-    //   // 0: read
-    //   // 1: write
-    //   logic          dma_type;
-    // } xdma_inter_cluster_first_cfg_t;
-    parameter type xdma_to_remote_data_t               = logic,
-    /// The data is logic [DataWidth-1:0]
-    parameter type xdma_to_remote_data_accompany_cfg_t = logic,
-    /// typedef struct packed {
-    ///     id_t                                 dma_id;
-    ///     logic                                dma_type;
-    ///     addr_t                               src_addr;
-    ///     addr_t                               dst_addr;
-    ///     len_t                                dma_length;
-    ///     logic                                ready_to_transfer;
-    /// } xdma_accompany_cfg_t;
-    parameter type xdma_req_desc_t                     = logic,
+    //==========================================================
+    // Cluster cfgs — system-level constants
+    //==========================================================
+    parameter logic [AxiAddrWidth-1:0] ClusterBaseAddr     = 'h1000_0000,
+    parameter logic [AxiAddrWidth-1:0] ClusterAddressSpace = 'h0010_0000,
+    parameter logic [AxiAddrWidth-1:0] MainMemBaseAddr     = 'h8000_0000,
+    parameter logic [AxiAddrWidth-1:0] MainMemEndAddr      = 48'b1 << 32,
+    parameter int unsigned MMIOSize                        = 16,
 
-    /// typedef struct packed {
-    ///     id_t                                 dma_id; 
-    ///     logic                                dma_type;
-    ///     addr_t                               remote_addr;
-    ///     len_t                                dma_length;
-    ///     logic                                ready_to_transfer;
-    /// } xdma_req_desc_t;
-    parameter type xdma_req_meta_t          = logic,
-    /// typedef struct packed {
-    ///     id_t                                 dma_id;
-    ///     len_t                                dma_length;
-    /// } xdma_req_meta_t;       
-    parameter type xdma_to_remote_grant_t   = logic,
-    // typedef struct packed {
-    //     id_t                                 dma_id;
-    //     addr_t                               from;
-    //     grant_reserved_t                     reserved;
-    // } xdma_to_remote_grant_t;
-    // Receiver side
-    parameter type xdma_from_remote_grant_t = logic,
-    // typedef struct packed {
-    //     id_t                                 dma_id;
-    //     addr_t                               from;
-    // } xdma_from_remote_grant_t;
-    parameter type xdma_from_remote_cfg_t   = logic,
-    // typedef struct packed {
-    //   first_frame_remaining_payload_t first_frame_remaining_payload;
-    //   addr_t                          writer_addr;
-    //   addr_t                          reader_addr;
-
-    //   id_t           dma_id;
-    //   frame_length_t frame_length;
-    //   // The dma_type
-    //   // 0: read
-    //   // 1: write
-    //   logic          dma_type;
-    // } xdma_inter_cluster_first_cfg_t;
-    parameter type xdma_from_remote_data_t               = logic,
-    /// The data is logic [DataWidth-1:0]
-    parameter type xdma_from_remote_data_accompany_cfg_t = logic,
-    // typedef struct packed {
-    //     id_t                                 dma_id; 
-    //     logic                                dma_type;
-    //     addr_t                               src_addr;
-    //     addr_t                               dst_addr;
-    //     len_t                                dma_length;
-    //     logic                                ready_to_transfer;
-    // } xdma_accompany_cfg_t;
-
-    // Cluster Cfgs
-    parameter addr_t ClusterBaseAddr     = 'h1000_0000,
-    parameter addr_t ClusterAddressSpace = 'h0010_0000,
-    parameter addr_t MainMemBaseAddr     = 'h8000_0000,
-    parameter addr_t MainMemEndAddr      = 48'b1 << 32,
-    // MMIO size in KB
-    parameter int    MMIOSize            = 16
+    //==========================================================
+    // Derived widths — DO NOT OVERRIDE
+    //   In the parameter list (rather than the body) because the port
+    //   list below references them to size the packed-vector accompany-
+    //   cfg ports. The typedefs that consume these widths live in the
+    //   body under `// Generated parameters & typedefs`.
+    //==========================================================
+    // -> Chisel: XDMACrossClusterParam.tcdmAddressWidth
+    //              = log2Ceil(tcdmSize) + 10 - log2Ceil(wordlineWidth/8)
+    localparam int unsigned DMALengthWidth =
+        $clog2(MaxMemSizeKiB) + 10 - $clog2(WordlineWidth / 8),
+    // Total bit width of xdma_to_remote_data_accompany_cfg_t.
+    // Mirrors the body typedef:
+    //   { id_t, logic, addr_t, addr_t, len_t, logic, logic, logic }
+    localparam int unsigned AccompanyCfgBits =
+        XDMAIdWidth + 1 + 2*AxiAddrWidth + DMALengthWidth + 3
 ) (
     /// Clock
     input logic clk_i,
     /// Asynchronous reset, active low
     input logic rst_ni,
 
-    ///
-    input  addr_t                              cluster_base_addr_i,
+    input  logic [AxiAddrWidth-1:0]               cluster_base_addr_i,
     // Sender Side
-    //// To remote cfg
-    input  xdma_to_remote_cfg_t                to_remote_cfg_i,
-    input  logic                               to_remote_cfg_valid_i,
-    output logic                               to_remote_cfg_ready_o,
+    //// To remote cfg (packed cross-cluster cfg payload)
+    input  logic [AxiWideDataWidth-1:0]           to_remote_cfg_i,
+    input  logic                                  to_remote_cfg_valid_i,
+    output logic                                  to_remote_cfg_ready_o,
     //// To remote data
-    input  xdma_to_remote_data_t               to_remote_data_i,
-    input  logic                               to_remote_data_valid_i,
-    output logic                               to_remote_data_ready_o,
-    //// To remote data accompany cfg
-    input  xdma_to_remote_data_accompany_cfg_t to_remote_data_accompany_cfg_i,
+    input  logic [AxiWideDataWidth-1:0]           to_remote_data_i,
+    input  logic                                  to_remote_data_valid_i,
+    output logic                                  to_remote_data_ready_o,
+    //// To remote data accompany cfg (packed; unpacked into named struct in body)
+    input  logic [AccompanyCfgBits-1:0]           to_remote_data_accompany_cfg_i,
 
     // Receiver Side
     //// From remote cfg
-    output xdma_from_remote_cfg_t                from_remote_cfg_o,
-    output logic                                 from_remote_cfg_valid_o,
-    input  logic                                 from_remote_cfg_ready_i,
+    output logic [AxiWideDataWidth-1:0]           from_remote_cfg_o,
+    output logic                                  from_remote_cfg_valid_o,
+    input  logic                                  from_remote_cfg_ready_i,
     //// From remote data
-    output xdma_from_remote_data_t               from_remote_data_o,
-    output logic                                 from_remote_data_valid_o,
-    input  logic                                 from_remote_data_ready_i,
-    //// From remote data accompany cfg
-    input  xdma_from_remote_data_accompany_cfg_t from_remote_data_accompany_cfg_i,
+    output logic [AxiWideDataWidth-1:0]           from_remote_data_o,
+    output logic                                  from_remote_data_valid_o,
+    input  logic                                  from_remote_data_ready_i,
+    //// From remote data accompany cfg (packed; unpacked into named struct in body)
+    input  logic [AccompanyCfgBits-1:0]           from_remote_data_accompany_cfg_i,
     /// XDMA finish
-    output logic                                 xdma_finish_o,
-    // AXI Interface
+    output logic                                  xdma_finish_o,
+    // AXI Interface — system types from parameter
     // Wide
-    output axi_wide_out_req_t                    axi_xdma_wide_out_req_o,
-    input  axi_wide_out_resp_t                   axi_xdma_wide_out_resp_i,
-    input  axi_wide_in_req_t                     axi_xdma_wide_in_req_i,
-    output axi_wide_in_resp_t                    axi_xdma_wide_in_resp_o,
+    output axi_wide_out_req_t                     axi_xdma_wide_out_req_o,
+    input  axi_wide_out_resp_t                    axi_xdma_wide_out_resp_i,
+    input  axi_wide_in_req_t                      axi_xdma_wide_in_req_i,
+    output axi_wide_in_resp_t                     axi_xdma_wide_in_resp_o,
     // Narrow
-    output axi_narrow_out_req_t                  axi_xdma_narrow_out_req_o,
-    input  axi_narrow_out_resp_t                 axi_xdma_narrow_out_resp_i,
-    input  axi_narrow_in_req_t                   axi_xdma_narrow_in_req_i,
-    output axi_narrow_in_resp_t                  axi_xdma_narrow_in_resp_o
+    output axi_narrow_out_req_t                   axi_xdma_narrow_out_req_o,
+    input  axi_narrow_out_resp_t                  axi_xdma_narrow_out_resp_i,
+    input  axi_narrow_in_req_t                    axi_xdma_narrow_in_req_i,
+    output axi_narrow_in_resp_t                   axi_xdma_narrow_in_resp_o
 );
+  //==========================================================
+  // Generated parameters & typedefs
+  //   Self-contained: every constant, typedef and enum the adapter and
+  //   its submodules need is declared here, derived from the meta params
+  //   in the parameter block above. Nothing is sourced from xdma_pkg (the
+  //   adapter no longer imports it).
+  //   Each entry cites its Chisel-side counterpart so a future edit can
+  //   keep all sites in sync.
+  //==========================================================
+
+  //---- Derived widths ----
+  // DMALengthWidth lives in the parameter block above (so the port list
+  // can reference it for the accompany-cfg packed-vector sizing).
+  // Wrapper template mirror: `DMALengthWidth` in
+  //   tmp/snax_cluster/hw/templates/snax_xdma_wrapper.sv.tpl
+  localparam int unsigned WideStrbWidth        = AxiWideDataWidth   / 8;
+  localparam int unsigned NarrowStrbWidth      = AxiNarrowDataWidth / 8;
+  localparam int unsigned WIDE_NARROW_DW_BITS  =
+      $clog2(AxiWideDataWidth / AxiNarrowDataWidth);
+  // Cross-cluster cfg first-frame payload (everything outside the explicit
+  // header fields). Matches the Chisel `xdma_inter_cluster_first_cfg_t`.
+  localparam int unsigned FirstFrameRemainingPayloadWidth =
+      AxiWideDataWidth - 1 - TotalFrameWidth - XDMAIdWidth - 2*AxiAddrWidth;
+  localparam int unsigned RemainingPayloadWidth =
+      AxiWideDataWidth - 1 - TotalFrameWidth;
+
+  //---- Primitive typedefs ----
+  typedef logic [XDMAIdWidth-1:0]                                 id_t;
+  typedef logic [AxiAddrWidth-1:0]                                addr_t;
+  typedef logic [AxiWideDataWidth-1:0]                            wide_data_t;
+  typedef logic [WideStrbWidth-1:0]                               wide_strb_t;
+  typedef logic [AxiNarrowDataWidth-1:0]                          narrow_data_t;
+  typedef logic [NarrowStrbWidth-1:0]                             narrow_strb_t;
+  typedef logic [TotalFrameWidth-1:0]                             frame_length_t;
+  typedef logic [FirstFrameRemainingPayloadWidth-1:0]             first_frame_remaining_payload_t;
+  typedef logic [AxiNarrowDataWidth-XDMAIdWidth-AxiAddrWidth-1:0] grant_reserved_t;
+  typedef logic [AxiNarrowDataWidth-XDMAIdWidth-AxiAddrWidth-1:0] finish_reserved_t;
+  typedef logic [DMALengthWidth-1:0]                              len_t;
+
+  //---- Enums (cross-cluster narrow bus indexing & addr-decoder) ----
+  typedef enum int unsigned {
+    ToRemoteFinish = 0,
+    ToRemoteGrant  = 1,
+    ToRemoteCfg    = 2,
+    NUM_NARROW_INP = 3
+  } xdma_narrow_to_remote_idx_e;
+  typedef enum int unsigned {
+    ToRemoteData = 0,
+    NUM_WIDE_INP = 1
+  } xdma_wide_to_remote_idx_e;
+  typedef enum int unsigned {
+    FinishIdx = 0,
+    GrantIdx  = 1,
+    CfgIdx    = 2,
+    DataIdx   = 3
+  } xdma_addr_offset_idx_e;
+  typedef enum int unsigned {
+    FromRemoteFinish = 0,
+    FromRemoteGrant  = 1,
+    FromRemoteCfg    = 2,
+    NUM_NARROW_OUP   = 3
+  } xdma_narrow_from_remote_idx_e;
+  typedef logic [$clog2(NUM_WIDE_INP)-1:0]   xdma_wide_req_idx_t;
+  typedef logic [$clog2(NUM_NARROW_INP)-1:0] xdma_narrow_req_idx_t;
+
+  //---- Cross-cluster payload structs (width-independent) ----
+  typedef struct packed {
+    first_frame_remaining_payload_t first_frame_remaining_payload;
+    addr_t                          writer_addr;
+    addr_t                          reader_addr;
+    id_t                            dma_id;
+    frame_length_t                  frame_length;
+    // dma_type: 0 = read, 1 = write
+    logic                           dma_type;
+  } xdma_inter_cluster_cfg_t;
+
+  typedef struct packed {
+    id_t             dma_id;
+    addr_t           from;
+    grant_reserved_t reserved;
+  } xdma_to_remote_grant_t;
+  typedef struct packed {
+    id_t   dma_id;
+    addr_t from;
+  } xdma_from_remote_grant_t;
+  typedef struct packed {
+    id_t              dma_id;
+    addr_t            from;
+    finish_reserved_t reserved;
+  } xdma_to_remote_finish_t;
+  typedef struct packed {
+    id_t   dma_id;
+    addr_t from;
+  } xdma_from_remote_finish_t;
+
+  //---- Width-dependent typedefs (derived from MaxMemSizeKiB / WordlineWidth
+  //---- via DMALengthWidth). MUST mirror the Chisel struct layouts.
+  typedef struct packed {
+    id_t   dma_id;
+    logic  dma_type;
+    addr_t src_addr;
+    addr_t dst_addr;
+    len_t  dma_length;
+    logic  ready_to_transfer;
+    logic  is_first_cw;
+    logic  is_last_cw;
+  } xdma_to_remote_data_accompany_cfg_t;
+  typedef xdma_to_remote_data_accompany_cfg_t xdma_from_remote_data_accompany_cfg_t;
+  typedef struct packed {
+    id_t   dma_id;
+    logic  dma_type;
+    addr_t remote_addr;
+    len_t  dma_length;
+    logic  ready_to_transfer;
+  } xdma_req_desc_t;
+  typedef struct packed {
+    id_t  dma_id;
+    len_t dma_length;
+  } xdma_req_meta_t;
+
+  //---- Internal AXI write request descriptors ----
+  typedef struct packed {
+    id_t        id;
+    addr_t      addr;
+    logic [7:0] len;
+    logic [2:0] size;
+    logic [1:0] burst;
+    logic [3:0] cache;
+    logic       is_write_data;
+  } xdma_req_aw_desc_t;
+  typedef struct packed {
+    logic [7:0] num_beats;
+    logic       is_single;
+    logic       is_write_data;
+  } xdma_req_w_desc_t;
+
+  //---- Receiver addr-decoder rule ----
+  typedef struct packed {
+    int unsigned idx;
+    addr_t       start_addr;
+    addr_t       end_addr;
+  } rule_t;
+
+  //---- AXI-to-write reqrsp protocol (internal) ----
+  typedef enum logic [3:0] {
+    AMONone = 4'h0,
+    AMOSwap = 4'h1,
+    AMOAdd  = 4'h2,
+    AMOAnd  = 4'h3,
+    AMOOr   = 4'h4,
+    AMOXor  = 4'h5,
+    AMOMax  = 4'h6,
+    AMOMaxu = 4'h7,
+    AMOMin  = 4'h8,
+    AMOMinu = 4'h9,
+    AMOLR   = 4'hA,
+    AMOSC   = 4'hB
+  } amo_op_e;
+  typedef struct packed {
+    addr_t        addr;
+    logic         write;
+    amo_op_e      amo;
+    wide_data_t   data;
+    wide_strb_t   strb;
+    logic [2:0]   size;
+    logic         q_valid;
+    logic         p_ready;
+  } reqrsp_wide_req_t;
+  typedef struct packed {
+    wide_data_t   data;
+    logic         error;
+    logic         p_valid;
+    logic         q_ready;
+  } reqrsp_wide_rsp_t;
+  typedef struct packed {
+    addr_t        addr;
+    logic         write;
+    amo_op_e      amo;
+    narrow_data_t data;
+    narrow_strb_t strb;
+    logic [2:0]   size;
+    logic         q_valid;
+    logic         p_ready;
+  } reqrsp_narrow_req_t;
+  typedef struct packed {
+    narrow_data_t data;
+    logic         error;
+    logic         p_valid;
+    logic         q_ready;
+  } reqrsp_narrow_rsp_t;
+
+  // Unpack the width-dependent packed-vector input ports into named struct
+  // views for the rest of the body.
+  xdma_to_remote_data_accompany_cfg_t   to_remote_data_accompany_cfg;
+  xdma_from_remote_data_accompany_cfg_t from_remote_data_accompany_cfg;
+  assign to_remote_data_accompany_cfg   = to_remote_data_accompany_cfg_i;
+  assign from_remote_data_accompany_cfg = from_remote_data_accompany_cfg_i;
+
+  // Unpack the width-independent cross-cluster cfg input port for the body.
+  xdma_inter_cluster_cfg_t to_remote_cfg;
+  assign to_remote_cfg = to_remote_cfg_i;
+
   //--------------------------------------
   // Define Macros
   //--------------------------------------
@@ -182,33 +340,33 @@ module xdma_axi_adapter_top
   // finish (4kB)
   // cluster end addr (high addr)
   // Data  start addr is cluster_end_addr-16KB
-  localparam addr_t MMIODataOffset = (xdma_pkg::DataIdx + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIODataOffset = (DataIdx + 1) * (MMIOSize / 4) * 1024;
   // CFG   start addr is cluster_end_addr-12KB
-  localparam addr_t MMIOCFGOffset = (xdma_pkg::CfgIdx + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIOCFGOffset = (CfgIdx + 1) * (MMIOSize / 4) * 1024;
   // Grant start addr is cluster_end_addr-8KB
-  localparam addr_t MMIOGrantOffset = (xdma_pkg::GrantIdx + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIOGrantOffset = (GrantIdx + 1) * (MMIOSize / 4) * 1024;
   // Finish start addr is cluster_end_addr-4KB
-  localparam addr_t MMIOFinishOffset = (xdma_pkg::FinishIdx + 1) * (MMIOSize / 4) * 1024;
+  localparam addr_t MMIOFinishOffset = (FinishIdx + 1) * (MMIOSize / 4) * 1024;
 
   function automatic addr_t get_cluster_base_addr(addr_t addr);
     return addr & {{($bits(addr_t) - ClusterAddressLength) {1'b1}}, {ClusterAddressLength{1'b0}}};
   endfunction
 
   function automatic addr_t get_cluster_end_addr(addr_t addr);
-    return (addr & {{(AddrWidth - ClusterAddressLength) {1'b1}},
+    return (addr & {{(AxiAddrWidth - ClusterAddressLength) {1'b1}},
                     {ClusterAddressLength{1'b0}}}) + ClusterAddressSpace;
   endfunction
 
   function automatic addr_t get_main_mem_base_addr(addr_t addr);
-    return {addr[AddrWidth-1:AddrWidth-ChipIdWidth], MainMemBaseAddr[AddrWidth-ChipIdWidth-1:0]};
+    return {addr[AxiAddrWidth-1:AxiAddrWidth-ChipIdWidth], MainMemBaseAddr[AxiAddrWidth-ChipIdWidth-1:0]};
   endfunction
 
   function automatic addr_t get_main_mem_end_addr(addr_t addr);
-    return {addr[AddrWidth-1:AddrWidth-ChipIdWidth], MainMemEndAddr[AddrWidth-ChipIdWidth-1:0]};
+    return {addr[AxiAddrWidth-1:AxiAddrWidth-ChipIdWidth], MainMemEndAddr[AxiAddrWidth-ChipIdWidth-1:0]};
   endfunction
 
   function automatic logic address_is_main_mem(addr_t addr);
-    return addr[AddrWidth-ChipIdWidth-1:0] >= MainMemBaseAddr;
+    return addr[AxiAddrWidth-ChipIdWidth-1:0] >= MainMemBaseAddr;
   endfunction
   //--------------------------------------
   // Unpack the req descriptor
@@ -223,8 +381,8 @@ module xdma_axi_adapter_top
   logic         to_remote_cfg_narrow_ready;
   // First we need the dw converter for the cfg from 512->64
   dw_converter #(
-      .INPUT_DW (xdma_pkg::AxiWideDataWidth),
-      .OUTPUT_DW(xdma_pkg::AxiNarrowDataWidth)
+      .INPUT_DW (AxiWideDataWidth),
+      .OUTPUT_DW(AxiNarrowDataWidth)
   ) i_cfg_dw_down_converter (
       .clk_i  (clk_i),
       .rst_ni (rst_ni),
@@ -254,24 +412,24 @@ module xdma_axi_adapter_top
     //--------------------------------------
     // We still need the original 512bit to remote cfg to compose the desc
     // DMA ID
-    to_remote_cfg_desc.dma_id = to_remote_cfg_i.dma_id;
+    to_remote_cfg_desc.dma_id = to_remote_cfg.dma_id;
     // DMA type
     // read = 0, write=1
-    to_remote_cfg_desc.dma_type = to_remote_cfg_i.dma_type;
+    to_remote_cfg_desc.dma_type = to_remote_cfg.dma_type;
     // if the task is a read (task_type=0)
     // local is writer addr, remote is reader addr
     // If the task is a write (task_type=1)
     // local is read addr, remote is writer addr
     to_remote_cfg_desc.remote_addr = (to_remote_cfg_desc.dma_type == 1'b0) ? address_is_main_mem(
-        to_remote_cfg_i.reader_addr) ? get_main_mem_end_addr(to_remote_cfg_i.reader_addr) -
-        MMIOCFGOffset : get_cluster_end_addr(to_remote_cfg_i.reader_addr) - MMIOCFGOffset :
-        address_is_main_mem(to_remote_cfg_i.writer_addr) ?
-        get_main_mem_end_addr(to_remote_cfg_i.writer_addr) - MMIOCFGOffset :
-        get_cluster_end_addr(to_remote_cfg_i.writer_addr) - MMIOCFGOffset;
+        to_remote_cfg.reader_addr) ? get_main_mem_end_addr(to_remote_cfg.reader_addr) -
+        MMIOCFGOffset : get_cluster_end_addr(to_remote_cfg.reader_addr) - MMIOCFGOffset :
+        address_is_main_mem(to_remote_cfg.writer_addr) ?
+        get_main_mem_end_addr(to_remote_cfg.writer_addr) - MMIOCFGOffset :
+        get_cluster_end_addr(to_remote_cfg.writer_addr) - MMIOCFGOffset;
     // The cfg length is stored in the first frame.
     // Since now we are using the narrow instead of the wide to send the cfg
     // we need to multiple the 512/64 = 8 to the dma length
-    to_remote_cfg_desc.dma_length = to_remote_cfg_i.frame_length << xdma_pkg::WIDE_NARROW_DW_BITS;
+    to_remote_cfg_desc.dma_length = to_remote_cfg.frame_length << WIDE_NARROW_DW_BITS;
     // Ready to transfer logic: Is a FSM that counts the frames to determine the frame header
     // FSM will control cfg_ready_to_transfer signal when the first frame is there
     to_remote_cfg_desc.ready_to_transfer = cfg_ready_to_transfer;
@@ -280,9 +438,9 @@ module xdma_axi_adapter_top
     // to remote data desc
     //--------------------------------------
     // to_remote_data_desc needs the to_remote_data_accompany_cfg
-    to_remote_data_desc.dma_id = to_remote_data_accompany_cfg_i.dma_id;
-    to_remote_data_desc.dma_length = to_remote_data_accompany_cfg_i.dma_length;
-    to_remote_data_desc.dma_type = to_remote_data_accompany_cfg_i.dma_type;
+    to_remote_data_desc.dma_id = to_remote_data_accompany_cfg.dma_id;
+    to_remote_data_desc.dma_length = to_remote_data_accompany_cfg.dma_length;
+    to_remote_data_desc.dma_type = to_remote_data_accompany_cfg.dma_type;
     // the to_remote_data has two scnerios:
     // 1. 0 reads 1
     //    remote cluster 1 needs the to_remote_data to send back back to 0
@@ -296,22 +454,22 @@ module xdma_axi_adapter_top
     //    now the accompany_cfg.src_addr = cluster 0 addr
     //            accompany_cfg.dst_addr = cluster 1 addr
     //    the to_remote_data_desc.remote_addr = dst_addr
-    to_remote_data_desc.remote_addr = address_is_main_mem(to_remote_data_accompany_cfg_i.dst_addr) ?
-        get_main_mem_end_addr(to_remote_data_accompany_cfg_i.dst_addr) - MMIODataOffset :
-        get_cluster_end_addr(to_remote_data_accompany_cfg_i.dst_addr) - MMIODataOffset;
-    to_remote_data_desc.ready_to_transfer = to_remote_data_accompany_cfg_i.ready_to_transfer;
+    to_remote_data_desc.remote_addr = address_is_main_mem(to_remote_data_accompany_cfg.dst_addr) ?
+        get_main_mem_end_addr(to_remote_data_accompany_cfg.dst_addr) - MMIODataOffset :
+        get_cluster_end_addr(to_remote_data_accompany_cfg.dst_addr) - MMIODataOffset;
+    to_remote_data_desc.ready_to_transfer = to_remote_data_accompany_cfg.ready_to_transfer;
 
     //--------------------------------------
     // to remote grant desc
     //--------------------------------------
-    to_remote_grant_desc.dma_id = from_remote_data_accompany_cfg_i.dma_id;
+    to_remote_grant_desc.dma_id = from_remote_data_accompany_cfg.dma_id;
     to_remote_grant_desc.dma_length = 1;
-    to_remote_grant_desc.dma_type = from_remote_data_accompany_cfg_i.dma_type;
+    to_remote_grant_desc.dma_type = from_remote_data_accompany_cfg.dma_type;
     to_remote_grant_desc.remote_addr =
-        address_is_main_mem(from_remote_data_accompany_cfg_i.src_addr) ?
-        get_main_mem_end_addr(from_remote_data_accompany_cfg_i.src_addr) - MMIOGrantOffset :
-        get_cluster_end_addr(from_remote_data_accompany_cfg_i.src_addr) - MMIOGrantOffset;
-    to_remote_grant_desc.ready_to_transfer = from_remote_data_accompany_cfg_i.ready_to_transfer;
+        address_is_main_mem(from_remote_data_accompany_cfg.src_addr) ?
+        get_main_mem_end_addr(from_remote_data_accompany_cfg.src_addr) - MMIOGrantOffset :
+        get_cluster_end_addr(from_remote_data_accompany_cfg.src_addr) - MMIOGrantOffset;
+    to_remote_grant_desc.ready_to_transfer = from_remote_data_accompany_cfg.ready_to_transfer;
 
   end
 
@@ -344,7 +502,7 @@ module xdma_axi_adapter_top
     if (!rst_ni) begin
       frame_length_holder <= '0;
     end else if (frame_length_holder_enable) begin
-      frame_length_holder <= to_remote_cfg_i.frame_length;
+      frame_length_holder <= to_remote_cfg.frame_length;
     end
   end
 
@@ -368,7 +526,7 @@ module xdma_axi_adapter_top
       sIDLE: begin
         cfg_ready_to_transfer = to_remote_cfg_valid_i;
         frame_length_counter_clear = 1'b1;
-        if (to_remote_cfg_valid_i && to_remote_cfg_ready_o && to_remote_cfg_i.frame_length > 1) begin
+        if (to_remote_cfg_valid_i && to_remote_cfg_ready_o && to_remote_cfg.frame_length > 1) begin
           // When the first frame is acknowledged, and the length is larger than 1, then the remaining several frames are not the header, so should not commit the new transfer
           frame_length_counter_clear   = 1'b0;
           frame_length_holder_enable   = 1'b1;
@@ -397,7 +555,7 @@ module xdma_axi_adapter_top
   logic wide_write_req_ready;
   // Wide Description
   xdma_req_desc_t wide_write_req_desc;
-  xdma_pkg::xdma_wide_req_idx_t wide_write_req_idx;
+  xdma_wide_req_idx_t wide_write_req_idx;
   // Wide Status
   logic wide_write_req_start;
   logic wide_write_req_busy;
@@ -405,7 +563,7 @@ module xdma_axi_adapter_top
   xdma_req_manager #(
       .data_t         (wide_data_t),
       .xdma_req_desc_t(xdma_req_desc_t),
-      .N_INP          (xdma_pkg::NUM_WIDE_INP)
+      .N_INP          (NUM_WIDE_INP)
   ) i_xdma_wide_req_manager (
       .clk_i      (clk_i),
       .rst_ni     (rst_ni),
@@ -431,7 +589,7 @@ module xdma_axi_adapter_top
   logic narrow_write_req_ready;
   // Narrow Description
   xdma_req_desc_t narrow_write_req_desc;
-  xdma_pkg::xdma_narrow_req_idx_t narrow_write_req_idx;
+  xdma_narrow_req_idx_t narrow_write_req_idx;
   // Narrow Status
   logic narrow_write_req_start;
   logic narrow_write_req_busy;
@@ -440,7 +598,7 @@ module xdma_axi_adapter_top
   xdma_req_manager #(
       .data_t         (narrow_data_t),
       .xdma_req_desc_t(xdma_req_desc_t),
-      .N_INP          (xdma_pkg::NUM_NARROW_INP)
+      .N_INP          (NUM_NARROW_INP)
   ) i_xdma_narrow_req_manager (
       .clk_i(clk_i),
       .rst_ni(rst_ni),
@@ -475,10 +633,10 @@ module xdma_axi_adapter_top
       .data_t            (narrow_data_t),
       .strb_t            (narrow_strb_t),
       .len_t             (len_t),
-      .xdma_req_idx_t    (xdma_pkg::xdma_narrow_req_idx_t),
+      .xdma_req_idx_t    (xdma_narrow_req_idx_t),
       .xdma_req_desc_t   (xdma_req_desc_t),
-      .xdma_req_aw_desc_t(xdma_pkg::xdma_req_aw_desc_t),
-      .xdma_req_w_desc_t (xdma_pkg::xdma_req_w_desc_t),
+      .xdma_req_aw_desc_t(xdma_req_aw_desc_t),
+      .xdma_req_w_desc_t (xdma_req_w_desc_t),
       .axi_out_req_t     (axi_narrow_out_req_t),
       .axi_out_resp_t    (axi_narrow_out_resp_t)
   ) i_xdma_narrow_req_backend (
@@ -516,10 +674,14 @@ module xdma_axi_adapter_top
       .data_t            (wide_data_t),
       .strb_t            (wide_strb_t),
       .len_t             (len_t),
-      .xdma_req_idx_t    (xdma_pkg::xdma_wide_req_idx_t),
+      .xdma_req_idx_t    (xdma_wide_req_idx_t),
       .xdma_req_desc_t   (xdma_req_desc_t),
-      .xdma_req_aw_desc_t(xdma_pkg::xdma_req_aw_desc_t),
-      .xdma_req_w_desc_t (xdma_pkg::xdma_req_w_desc_t),
+      .xdma_req_aw_desc_t(xdma_req_aw_desc_t),
+      .xdma_req_w_desc_t (xdma_req_w_desc_t),
+      // The wide path's only request idx is ToRemoteData (data-write
+      // burst); pass the enum literal so the burst reshaper recognises
+      // write bursts by name rather than by raw `'0`.
+      .WriteDataIdx      (ToRemoteData),
       .axi_out_req_t     (axi_wide_out_req_t),
       .axi_out_resp_t    (axi_wide_out_resp_t)
   ) i_xdma_wide_req_backend (
@@ -604,8 +766,8 @@ module xdma_axi_adapter_top
   // Grant Manager
   //--------------------------------------
   always_comb begin
-    to_remote_grant.dma_id = from_remote_data_accompany_cfg_i.dma_id;
-    to_remote_grant.from = from_remote_data_accompany_cfg_i.src_addr;
+    to_remote_grant.dma_id = from_remote_data_accompany_cfg.dma_id;
+    to_remote_grant.from = from_remote_data_accompany_cfg.src_addr;
     to_remote_grant.reserved = '0;
   end
   xdma_grant_manager #(
@@ -614,7 +776,7 @@ module xdma_axi_adapter_top
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),
       .from_remote_grant_i             (grant),
-      .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg_i),
+      .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg),
       .to_remote_grant_valid_o         (to_remote_grant_valid),
       .to_remote_grant_ready_i         (to_remote_grant_ready)
   );
@@ -628,7 +790,7 @@ module xdma_axi_adapter_top
   xdma_axi_to_write #(
       .data_t       (wide_data_t),
       .addr_t       (addr_t),
-      .axi_id_t     (axi_wide_id_t),
+      .AxiIdWidth   (WideAXIIdWidth),
       .strb_t       (wide_strb_t),
       .reqrsp_req_t (reqrsp_wide_req_t),
       .reqrsp_rsp_t (reqrsp_wide_rsp_t),
@@ -659,7 +821,7 @@ module xdma_axi_adapter_top
   xdma_axi_to_write #(
       .data_t       (narrow_data_t),
       .addr_t       (addr_t),
-      .axi_id_t     (axi_narrow_id_t),
+      .AxiIdWidth   (NarrowAXIIdWidth),
       .strb_t       (narrow_strb_t),
       .reqrsp_req_t (reqrsp_narrow_req_t),
       .reqrsp_rsp_t (reqrsp_narrow_rsp_t),
@@ -698,7 +860,7 @@ module xdma_axi_adapter_top
   // For control (cfg, grant, finish), we need the demux
   // since the control signals are all from the narrow axi
 
-  xdma_pkg::rule_t [xdma_pkg::NUM_NARROW_OUP-1:0] xdma_narrow_rules;
+  rule_t [NUM_NARROW_OUP-1:0] xdma_narrow_rules;
   addr_t local_end_addr;
   assign local_end_addr = address_is_main_mem(
       cluster_base_addr_i
@@ -708,21 +870,21 @@ module xdma_axi_adapter_top
       cluster_base_addr_i
   );
   assign xdma_narrow_rules = {
-    xdma_pkg::rule_t
+    rule_t
 '{
-        idx: xdma_pkg::FromRemoteCfg,
+        idx: FromRemoteCfg,
         start_addr: local_end_addr - MMIOCFGOffset,
         end_addr: local_end_addr - MMIOCFGOffset + (MMIOSize / 4) * 1024
     },
-    xdma_pkg::rule_t
+    rule_t
 '{
-        idx: xdma_pkg::FromRemoteGrant,
+        idx: FromRemoteGrant,
         start_addr: local_end_addr - MMIOGrantOffset,
         end_addr: local_end_addr - MMIOGrantOffset + (MMIOSize / 4) * 1024
     },
-    xdma_pkg::rule_t
+    rule_t
 '{
-        idx: xdma_pkg::FromRemoteFinish,
+        idx: FromRemoteFinish,
         start_addr: local_end_addr - MMIOFinishOffset,
         end_addr: local_end_addr - MMIOFinishOffset + (MMIOSize / 4) * 1024
     }
@@ -741,7 +903,7 @@ module xdma_axi_adapter_top
   logic         from_remote_finish_ready;
 
   xdma_write_demux #(
-      .N_OUP (xdma_pkg::NUM_NARROW_OUP),
+      .N_OUP (NUM_NARROW_OUP),
       .data_t(narrow_data_t),
       .addr_t(addr_t),
       .rule_t(rule_t)
@@ -762,8 +924,8 @@ module xdma_axi_adapter_top
   // Receive CFG DW Converter
   //-------------------------------------
   dw_converter #(
-      .INPUT_DW (xdma_pkg::AxiNarrowDataWidth),
-      .OUTPUT_DW(xdma_pkg::AxiWideDataWidth)
+      .INPUT_DW (AxiNarrowDataWidth),
+      .OUTPUT_DW(AxiWideDataWidth)
   ) i_cfg_dw_up_converter (
       .clk_i  (clk_i),
       .rst_ni (rst_ni),
@@ -778,7 +940,7 @@ module xdma_axi_adapter_top
   // Receive Grant FIFO
   //-------------------------------------
   // This temp is the structure converter from data_t to xdma_to_remote_grant_t
-  xdma_pkg::xdma_to_remote_grant_t from_remote_grant_tmp;
+  xdma_to_remote_grant_t from_remote_grant_tmp;
   assign from_remote_grant_tmp = from_remote_grant;
 
   xdma_from_remote_grant_t receive_grant;
@@ -829,15 +991,14 @@ module xdma_axi_adapter_top
       .xdma_to_remote_data_accompany_cfg_t  (xdma_to_remote_data_accompany_cfg_t),
       .xdma_from_remote_data_accompany_cfg_t(xdma_from_remote_data_accompany_cfg_t),
       .xdma_req_desc_t                      (xdma_req_desc_t),
-      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t),
-      .xdma_from_remote_finish_t            (xdma_from_remote_finish_t)
+      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t)
   ) i_xdma_finish_manager (
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),
       .xdma_finish_o                   (xdma_finish_o),
       .xdma_write_finish_o             (xdma_write_finish),
-      .to_remote_data_accompany_cfg_i  (to_remote_data_accompany_cfg_i),
-      .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg_i),
+      .to_remote_data_accompany_cfg_i  (to_remote_data_accompany_cfg),
+      .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg),
       .from_remote_finish_i            (from_remote_finish),
       .from_remote_finish_valid_i      (from_remote_finish_valid),
       .from_remote_finish_ready_o      (from_remote_finish_ready),

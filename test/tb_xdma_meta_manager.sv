@@ -1,6 +1,18 @@
 `timescale 1ns/1ps
 module tb_xdma_meta_manager();
-import xdma_pkg::*;
+    // Standalone-test mirror of the adapter's parameter knobs (xdma_pkg
+    // has been retired; this tb owns its own protocol typedefs).
+    localparam int unsigned TbMaxMemSizeKiB  = 32'd4096;
+    localparam int unsigned TbWordlineWidth  = 32'd64;
+    localparam int unsigned TbXDMAIdWidth     = 32'd4;
+    localparam int unsigned TbDMALengthWidth =
+        $clog2(TbMaxMemSizeKiB) + 10 - $clog2(TbWordlineWidth/8);
+    typedef logic [TbXDMAIdWidth-1:0]     tb_id_t;
+    typedef logic [TbDMALengthWidth-1:0] tb_len_t;
+    typedef struct packed {
+      tb_id_t  dma_id;
+      tb_len_t dma_length;
+    } tb_xdma_req_meta_t;
       // DUT signals
     logic clk;
     logic rst_n;
@@ -17,15 +29,15 @@ import xdma_pkg::*;
         .clk_o (clk),
         .rst_no(rst_n)
     );
-    xdma_pkg::xdma_req_meta_t write_req_meta;
+    tb_xdma_req_meta_t write_req_meta;
     logic write_req_busy;
     logic write_req_done;
-    xdma_pkg::id_t cur_dma_id;
+    tb_id_t cur_dma_id;
     logic write_happening;
     xdma_meta_manager #(
-        .xdma_req_meta_t(xdma_pkg::xdma_req_meta_t),
-        .id_t           (xdma_pkg::id_t),
-        .len_t          (xdma_pkg::len_t)
+        .xdma_req_meta_t(tb_xdma_req_meta_t),
+        .id_t           (tb_id_t),
+        .len_t          (tb_len_t)
     ) i_xdma_meta_manager (
         .clk_i     (clk              ),
         .rst_ni    (rst_n            ),       
