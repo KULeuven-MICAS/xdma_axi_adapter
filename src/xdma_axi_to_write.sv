@@ -15,8 +15,11 @@ module xdma_axi_to_write #(
     /// Reqrsp request channel type.
     parameter type reqrsp_req_t  = logic,
     /// Reqrsp response channel type.
-    parameter type reqrsp_rsp_t  = logic
-
+    parameter type reqrsp_rsp_t  = logic,
+    /// Enum type of `reqrsp_req_t.amo`. Threaded in so the assignment below
+    /// is an explicit same-type cast — silences vsim-8386 (implicit `'0` to
+    /// enum) and Verilator's IEEE 1800-2023 6.19.3 cross-type-enum check.
+    parameter type amo_op_e_t    = logic [3:0]
 ) (
     /// Clock input.
     input  logic         clk_i,
@@ -33,29 +36,6 @@ module xdma_axi_to_write #(
     /// Reqrsp respone channel.
     input  reqrsp_rsp_t  reqrsp_rsp_i
 );
-  //--------------------------------------
-  // Reqrsp Type for Standalone Test
-  //--------------------------------------
-  // Local mirror of reqrsp_pkg::amo_op_e — xdma_axi_adapter is not a
-  // Bender dependent of snitch_cluster's reqrsp_interface, so we cannot
-  // import the package here. Using a named enum value (AMONone) keeps the
-  // assignment to `reqrsp_req_o.amo` a legal enum-to-enum write and
-  // avoids the vsim-8386 warning that `'0` would trigger.
-  typedef enum logic [3:0] {
-    AMONone = 4'h0,
-    AMOSwap = 4'h1,
-    AMOAdd  = 4'h2,
-    AMOAnd  = 4'h3,
-    AMOOr   = 4'h4,
-    AMOXor  = 4'h5,
-    AMOMax  = 4'h6,
-    AMOMaxu = 4'h7,
-    AMOMin  = 4'h8,
-    AMOMinu = 4'h9,
-    AMOLR   = 4'hA,
-    AMOSC   = 4'hB
-  } amo_op_e;
-
   typedef struct packed {
     addr_t                   addr;
     axi_pkg::atop_t          atop;
@@ -126,10 +106,10 @@ module xdma_axi_to_write #(
   always_comb begin : proc_req_compose
     reqrsp_req_o.addr = wr_meta.addr;
     reqrsp_req_o.write = wr_meta.write;
-    // `amo` is an `amo_op_e` enum field in reqrsp_req_t. Assigning a
-    // named local enum value keeps it a legal enum-to-enum write and
-    // avoids vsim-8386 on `'0`. AMONone == 4'h0 mirrors reqrsp_pkg.
-    reqrsp_req_o.amo = AMONone;
+    // Explicit cast to the LHS enum type (threaded in via `amo_op_e_t`).
+    // Same-type assignment keeps vsim-8386 quiet and stays inside IEEE
+    // 1800-2023 6.19.3 for Verilator.
+    reqrsp_req_o.amo = amo_op_e_t'('0);
     reqrsp_req_o.data = (wr_meta.write) ? axi_req_i.w.data : '0;
     reqrsp_req_o.strb = (wr_meta.write) ? axi_req_i.w.strb : '0;
     reqrsp_req_o.size = wr_meta.size;
