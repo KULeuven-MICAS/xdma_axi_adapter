@@ -704,7 +704,20 @@ module xdma_axi_adapter_top
       .axi_dma_resp_i        (axi_xdma_wide_out_resp_i)
   );
   assign wide_write_req_data_valid = wide_write_req_valid;
-  assign wide_write_req_desc_valid = wide_write_req_desc.ready_to_transfer;
+  // For a to_remote WRITE (dma_type=1), the descriptor's `ready_to_transfer` is driven from the
+  // sender datapath's `toRemoteAccompaniedCfg.readyToTransfer`, which is tied to `io.readerBusy`.
+  // For a short (single-64B-beat) remote write the reader finishes its local read and drops
+  // readerBusy BEFORE the cross-cluster grant round-trip completes, so `ready_to_transfer` is a
+  // stale 0 by the time the req_manager is BUSY with the buffered beat -> the AW descriptor is
+  // never pushed -> aw_valid stays 0 -> the write never leaves the sender -> the receiver's writer
+  // waits forever -> no finish -> the sender core spins on FINISH_REMOTE. Instead, hold desc_valid
+  // for the whole req_manager transfer window (`busy`, a registered per-transfer level): the burst
+  // reshaper's own IDLE->BUSY->FINISH FSM still consumes exactly one descriptor per transfer, and
+  // `busy` drops precisely at `done`, so there is no duplicate-AW re-trigger. Read-responses
+  // (dma_type=0) keep the original path untouched.
+  assign wide_write_req_desc_valid = wide_write_req_desc.dma_type
+                                   ? wide_write_req_busy
+                                   : wide_write_req_desc.ready_to_transfer;
   assign wide_write_req_ready = wide_write_req_data_ready;
   ////--------------------------------------
   // Req Meta Manager
