@@ -406,6 +406,8 @@ module xdma_axi_adapter_top
       to_remote_cfg_desc, to_remote_data_desc, to_remote_grant_desc, to_remote_finish_desc;
   // CFG ready to transfer signal
   logic cfg_ready_to_transfer;
+  // Sticky copy of the to_remote WRITE data-readiness pulse; see the always_ff below.
+  logic wide_write_rtt_q;
   always_comb begin : proc_unpack_desc
     //--------------------------------------
     // to remote cfg desc
@@ -457,7 +459,10 @@ module xdma_axi_adapter_top
     to_remote_data_desc.remote_addr = address_is_main_mem(to_remote_data_accompany_cfg.dst_addr) ?
         get_main_mem_end_addr(to_remote_data_accompany_cfg.dst_addr) - MMIODataOffset :
         get_cluster_end_addr(to_remote_data_accompany_cfg.dst_addr) - MMIODataOffset;
-    to_remote_data_desc.ready_to_transfer = to_remote_data_accompany_cfg.ready_to_transfer;
+    // For a to_remote WRITE, use the sticky readiness (see wide_write_rtt_q below): the raw
+    // pulse can drop before the req_manager grants this input, leaving the descriptor a stale 0.
+    to_remote_data_desc.ready_to_transfer = to_remote_data_accompany_cfg.ready_to_transfer
+        | (to_remote_data_accompany_cfg.dma_type & wide_write_rtt_q);
 
     //--------------------------------------
     // to remote grant desc
@@ -534,7 +539,21 @@ module xdma_axi_adapter_top
         end
       end
       sSendFrameBody: begin
-        if (frame_length_counter == frame_length_holder - 1) begin
+        // The exit MUST be qualified by an actual frame handshake.  `frame_length_counter`
+        // counts ACCEPTED frames and already reads 1 once the header is taken, so an
+        // unqualified `counter == holder - 1` compare fires the very next cycle -- while the
+        // body frame is still sitting on `to_remote_cfg`, because `to_remote_cfg_ready_o`
+        // comes from the 512->64 down-converter and stays low for the ~8 cycles it needs to
+        // drain the header.  Back in sIDLE, `cfg_ready_to_transfer = to_remote_cfg_valid_i`
+        // is asserted against that still-pending BODY, and the descriptor at the top of this
+        // module is computed combinationally from body payload PARSED AS A HEADER.  On an
+        // all-zero body that yields remote_addr = get_cluster_end_addr(0) - MMIOCFGOffset
+        // = 0x3FD000, an UNMAPPED address, which the SoC narrow xbar default-routes onto the
+        // narrow->wide bridge; the resulting bogus burst is then abandoned mid-flight and
+        // deadlocks the bridge (axi_dw_upsizer never releases aw_ready, axi_id_remap latches
+        // HoldAW and hard-gates the read channel), starving the host's instruction fetch.
+        // Qualifying on the handshake keeps us here until the LAST body frame is consumed.
+        if (frame_length_counter_enable && frame_length_counter == frame_length_holder - 1) begin
           next_state_ready_to_transfer = sIDLE;
         end
       end
@@ -580,6 +599,30 @@ module xdma_axi_adapter_top
       .busy_o     (wide_write_req_busy),
       .done_i     (wide_write_req_done)
   );
+
+  // A to_remote WRITE's `ready_to_transfer` comes from the sender datapath's
+  // `toRemoteAccompaniedCfg.readyToTransfer`, which is tied to `io.readerBusy`. For a short
+  // (single-64B-beat) remote write the reader finishes its local read and drops readerBusy BEFORE
+  // the cross-cluster grant round-trip completes, so the descriptor reads a stale 0 by the time
+  // the req_manager is BUSY with the buffered beat -> the AW descriptor is never pushed ->
+  // aw_valid stays 0 -> the write never leaves the sender -> the receiver's writer waits forever
+  // -> no finish -> the sender core spins on FINISH_REMOTE.
+  //
+  // Latch the readiness pulse and hold it until the transfer completes. Note it is NOT sufficient
+  // to substitute `busy` here: `busy` is a mere activity level (grant..done), so it would issue the
+  // AW even when the write data is not yet available, stalling the W channel mid-burst and holding
+  // the SHARED wide xbar -- which starves the host's icache refills from spm_wide (the host
+  // executes out of 0x8000_0000) and wedges the core. Gating on real readiness avoids that.
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      wide_write_rtt_q <= 1'b0;
+    end else if (wide_write_req_done) begin
+      wide_write_rtt_q <= 1'b0;
+    end else if (to_remote_data_accompany_cfg.ready_to_transfer
+                 && to_remote_data_accompany_cfg.dma_type) begin
+      wide_write_rtt_q <= 1'b1;
+    end
+  end
 
 
   // Narrow manager sends the ctrl (cfg, grant, finish)
@@ -704,20 +747,9 @@ module xdma_axi_adapter_top
       .axi_dma_resp_i        (axi_xdma_wide_out_resp_i)
   );
   assign wide_write_req_data_valid = wide_write_req_valid;
-  // For a to_remote WRITE (dma_type=1), the descriptor's `ready_to_transfer` is driven from the
-  // sender datapath's `toRemoteAccompaniedCfg.readyToTransfer`, which is tied to `io.readerBusy`.
-  // For a short (single-64B-beat) remote write the reader finishes its local read and drops
-  // readerBusy BEFORE the cross-cluster grant round-trip completes, so `ready_to_transfer` is a
-  // stale 0 by the time the req_manager is BUSY with the buffered beat -> the AW descriptor is
-  // never pushed -> aw_valid stays 0 -> the write never leaves the sender -> the receiver's writer
-  // waits forever -> no finish -> the sender core spins on FINISH_REMOTE. Instead, hold desc_valid
-  // for the whole req_manager transfer window (`busy`, a registered per-transfer level): the burst
-  // reshaper's own IDLE->BUSY->FINISH FSM still consumes exactly one descriptor per transfer, and
-  // `busy` drops precisely at `done`, so there is no duplicate-AW re-trigger. Read-responses
-  // (dma_type=0) keep the original path untouched.
-  assign wide_write_req_desc_valid = wide_write_req_desc.dma_type
-                                   ? wide_write_req_busy
-                                   : wide_write_req_desc.ready_to_transfer;
+  // `ready_to_transfer` is now sticky for to_remote WRITEs (see wide_write_rtt_q above), so the
+  // stock gate is correct for both directions and the AW stays gated on real data readiness.
+  assign wide_write_req_desc_valid = wide_write_req_desc.ready_to_transfer;
   assign wide_write_req_ready = wide_write_req_data_ready;
   ////--------------------------------------
   // Req Meta Manager
