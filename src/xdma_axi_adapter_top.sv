@@ -99,9 +99,9 @@ module xdma_axi_adapter_top
         $clog2(MaxMemSizeKiB) + 10 - $clog2(WordlineWidth / 8),
     // Total bit width of xdma_to_remote_data_accompany_cfg_t.
     // Mirrors the body typedef:
-    //   { id_t, logic, addr_t, addr_t, len_t, logic, logic, logic }
+    //   { id_t, logic, addr_t, addr_t, len_t, logic, logic, logic, logic }
     localparam int unsigned AccompanyCfgBits =
-        XDMAIdWidth + 1 + 2*AxiAddrWidth + DMALengthWidth + 3
+        XDMAIdWidth + 1 + 2*AxiAddrWidth + DMALengthWidth + 4
 ) (
     /// Clock
     input logic clk_i,
@@ -255,6 +255,18 @@ module xdma_axi_adapter_top
     logic  ready_to_transfer;
     logic  is_first_cw;
     logic  is_last_cw;
+    // Task ownership, kept deliberately independent of data position: "this node issued
+    // the task, so raise `xdma_finish_o` on MY core when the chain retires". `is_first_cw`
+    // / `is_last_cw` say where a node sits in the DATA flow; they do not say who is
+    // waiting for the answer. The two coincide for ChainWrite (initiator = head) and are
+    // opposite for ChainGather (initiator = the collector = the tail), so conflating them
+    // leaves the gather's collector with the result and no completion.
+    //   ChainWrite  : is_initiator = is_first_cw
+    //   ChainGather : is_initiator = is_last_cw
+    // Chisel drives it from `cfg.origination === originationIsFromLocal`. Only
+    // `xdma_finish_manager` reads it; the grant credit and the backwards finish cascade
+    // are untouched.
+    logic  is_initiator;
   } xdma_to_remote_data_accompany_cfg_t;
   typedef xdma_to_remote_data_accompany_cfg_t xdma_from_remote_data_accompany_cfg_t;
   typedef struct packed {

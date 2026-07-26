@@ -13,7 +13,8 @@ TBS           ?= find_first_one_idx \
                  xdma_stall_watchdog \
                  xdma_finish_manager_guard \
                  xdma_axi_adapter_top \
-                 xdma_chain_3node
+                 xdma_chain_write_3node \
+                 xdma_chain_gather_3node
 
 SIM_TARGETS := $(addsuffix .log,$(addprefix sim-,$(TBS)))
 
@@ -36,7 +37,13 @@ sim_all: $(SIM_TARGETS)
 
 build:
 	mkdir -p $@
-compile.log: Bender.yml | build
+
+# Depend on the sources, not just Bender.yml. With only Bender.yml here, editing an .sv
+# file left compile.log up to date, so `make all` happily re-ran the PREVIOUSLY compiled
+# design -- a regression that reports on stale RTL is worse than no regression.
+SRCS := $(wildcard src/*.sv) $(wildcard $(TEST_DIR)/*.sv)
+
+compile.log: Bender.yml $(SRCS) | build
 	export VSIM="$(VSIM)"; cd build && ../scripts/compile_vsim.sh | tee ../$@
 	(! grep -n "Error:" $@)
 

@@ -1,44 +1,55 @@
 // Authors:
 // - Fanchen Kong <fanchen.kong@kuleuven.be>
 //
-// Three-node adapter-level chain testbench.
+// Shared body of the three-node chain testbenches. `tb_xdma_chain_write_3node` and
+// `tb_xdma_chain_gather_3node` are thin wrappers that instantiate this with `Gather` clear
+// or set; everything below is common to both, because at the adapter boundary the two
+// modes ARE the same transport.
 //
-// A chain needs three nodes before a *middle* hop exists, which is what this testbench
-// adds over `tb_xdma_axi_adapter_top`: `xdma_grant_manager`'s WRITE_MIDDLE state and
+// A chain needs three nodes before a *middle* hop exists, which is what these testbenches
+// add over `tb_xdma_axi_adapter_top`: `xdma_grant_manager`'s WRITE_MIDDLE state and
 // `xdma_finish_manager`'s WriteMiddleBusy/SendToPreviousHop states are only reachable with
-// a node that both receives and forwards. Those are the states a chained transfer depends
-// on, and the ones that hang silently when a hop upstream or downstream wedges.
+// a node that both receives and forwards.
 //
 // Both AXI buses are wired. cfg, grant and finish all ride the narrow bus, so a chain
 // cannot form without it.
 //
-//   node 0 (head)   is_first_cw=1, is_last_cw=0   sends the payload
+// Data always flows C0 -> C1 -> C2, so the DATA roles are the same in both modes:
+//
+//   node 0 (head)   is_first_cw=1, is_last_cw=0   sources the payload
 //   node 1 (middle) neither                       forwards it (junction FIFO below)
 //   node 2 (tail)   is_first_cw=0, is_last_cw=1   sinks it
 //
-// The ChainGather accompany-cfg encodings are
-// byte-identical to ChainWrite's -- head = `is_first_cw`, middles = neither, tail =
-// `is_last_cw` -- and no adapter module inspects a payload bit. So at this level a linear
-// leaf-initiated gather and a chained write are the *same* stimulus, and this testbench
-// covers both. The difference between them lives entirely in Chisel, in what the junction
-// (modelled here as a plain FIFO) does with the data.
+// What the two modes differ in is TASK OWNERSHIP, carried by the separate `is_initiator`
+// bit, and that is the whole point of the split:
 //
-// What is checked:
-//   * cfg propagates hop by hop and arrives bit-exact,
-//   * the payload arrives at the tail unmodified and in order (which can only happen if
-//     the grant credit cascaded backwards tail -> middle -> head first),
-//   * the finish cascades back tail -> middle -> head and the head reports exactly one
-//     `xdma_finish_o`,
-//   * the middle and tail nodes report **no** local finish -- a middle node that raises
-//     one has been mistaken for the chain head,
-//   * no `xdma_stall_error_o` fires anywhere -- the stall watchdogs are enabled here, so
-//     a wedged hop is reported rather than left to hang the run,
-//   * a second, longer transfer completes -- proving every FSM returned to idle.
+//                | initiator | cfg walks   | completion lands on
+//   -------------|-----------|-------------|---------------------
+//   ChainWrite   | head (C0) | C0 -> C2    | C0 -- the node that sourced the data
+//   ChainGather  | tail (C2) | C2 -> C0    | C2 -- the collector, which sourced nothing
+//
+// The gather case is the one that used to be unrepresentable: before `is_initiator`,
+// `xdma_finish_o` was raised only by the `is_first_cw` node, so a collector at the tail
+// received the answer and no completion. Each mode asserts that exactly ONE node reports,
+// and that it is the right one -- so a regression that reconflates position with ownership
+// fails here rather than at bring-up.
+//
+// Also checked, in both modes: cfg propagates hop by hop bit-exact; the payload arrives at
+// the tail unmodified and in order (which can only happen if the grant credit cascaded
+// backwards tail -> middle -> head first); no `xdma_stall_error_o` fires; and a second,
+// longer transfer completes, proving every FSM returned to idle.
 
 `timescale 1ns / 1ps
 `include "axi/typedef.svh"
 
-module tb_xdma_chain_3node ();
+module xdma_chain_3node_body #(
+    /// 0 = ChainWrite (initiator is the head), 1 = ChainGather (initiator is the tail).
+    parameter bit Gather = 1'b0
+) ();
+
+  localparam string ModeName = Gather ? "ChainGather" : "ChainWrite";
+  // Which node owns the task, and therefore which one must raise `xdma_finish_o`.
+  localparam int unsigned InitiatorNode = Gather ? 2 : 0;
 
   //====================================================================
   // Protocol typedefs (mirror xdma_axi_adapter_top's body)
@@ -81,6 +92,7 @@ module tb_xdma_chain_3node ();
     logic     ready_to_transfer;
     logic     is_first_cw;
     logic     is_last_cw;
+    logic     is_initiator;
   } tb_xdma_accompany_cfg_t;
 
   typedef struct packed {
@@ -498,13 +510,24 @@ module tb_xdma_chain_3node ();
   // One end-to-end chained transfer across the three nodes
   //====================================================================
   task automatic run_chain(input tb_id_t id, input int unsigned len);
-    $display("[TB] chain transfer: dma_id=%0d, dma_length=%0d", id, len);
+    $display("[TB] %s transfer: dma_id=%0d, dma_length=%0d", ModeName, id, len);
 
     //---- Phase A: cfg walks the chain, hop by hop ----
-    send_cfg(0, 1, id);
-    expect_cfg(1);
-    send_cfg(1, 2, id);
-    expect_cfg(2);
+    // The initiator configures the whole chain, so cfg walks OUTWARD from it: with the
+    // data always flowing C0 -> C1 -> C2, that is downstream for ChainWrite and upstream
+    // for ChainGather. The adapter routes a cfg frame purely from `writer_addr`, so the
+    // direction costs it nothing.
+    if (Gather) begin
+      send_cfg(2, 1, id);
+      expect_cfg(1);
+      send_cfg(1, 0, id);
+      expect_cfg(0);
+    end else begin
+      send_cfg(0, 1, id);
+      expect_cfg(1);
+      send_cfg(1, 2, id);
+      expect_cfg(2);
+    end
     repeat (5) @(posedge clk);
 
     //---- Phase B: the chain windows open ----
@@ -518,6 +541,9 @@ module tb_xdma_chain_3node ();
     from_remote_acfg[2].ready_to_transfer <= 1'b1;
     from_remote_acfg[2].is_first_cw       <= 1'b0;
     from_remote_acfg[2].is_last_cw        <= 1'b1;
+    // In ChainGather the tail is the collector -- it owns the task and is the node whose
+    // core is waiting, even though it sourced none of the data.
+    from_remote_acfg[2].is_initiator      <= Gather;
 
     // Middle: neither first nor last, on both sides. This is the WRITE_MIDDLE /
     // WriteMiddleBusy path that no existing testbench reaches.
@@ -529,6 +555,7 @@ module tb_xdma_chain_3node ();
     from_remote_acfg[1].ready_to_transfer <= 1'b1;
     from_remote_acfg[1].is_first_cw       <= 1'b0;
     from_remote_acfg[1].is_last_cw        <= 1'b0;
+    from_remote_acfg[1].is_initiator      <= 1'b0;
 
     // The middle node's *outgoing* busy level has to cover its whole participation window.
     // A gather middle node that stops writing locally, and therefore drops this level,
@@ -542,8 +569,10 @@ module tb_xdma_chain_3node ();
     to_remote_acfg[1].ready_to_transfer <= 1'b1;
     to_remote_acfg[1].is_first_cw       <= 1'b0;
     to_remote_acfg[1].is_last_cw        <= 1'b0;
+    // A middle hop never owns the task in either mode.
+    to_remote_acfg[1].is_initiator      <= 1'b0;
 
-    // Head: originates the chain.
+    // Head: sources the data in both modes, but owns the task only in ChainWrite.
     to_remote_acfg[0].dma_id            <= id;
     to_remote_acfg[0].dma_type          <= 1'b1;
     to_remote_acfg[0].src_addr          <= cluster_base(0);
@@ -552,6 +581,7 @@ module tb_xdma_chain_3node ();
     to_remote_acfg[0].ready_to_transfer <= 1'b1;
     to_remote_acfg[0].is_first_cw       <= 1'b1;
     to_remote_acfg[0].is_last_cw        <= 1'b0;
+    to_remote_acfg[0].is_initiator      <= ~Gather;
     @(posedge clk);
 
     //---- Phase C: payload ----
@@ -565,18 +595,25 @@ module tb_xdma_chain_3node ();
     from_remote_acfg[1].ready_to_transfer <= 1'b0;
     to_remote_acfg[0].ready_to_transfer   <= 1'b0;
 
-    //---- Phase D: finish cascades back to the head ----
-    wait (finish_cnt[0] == 1);
+    //---- Phase D: the finish cascades backwards, the initiator reports ----
+    // The cascade itself is identical in both modes -- tail -> middle -> head, releasing
+    // each grant credit on the way. Only the node allowed to pulse its core differs.
+    wait (finish_cnt[InitiatorNode] == 1);
     repeat (20) @(posedge clk);
 
     //---- Checks ----
     check_int(tail_rx_cnt, len, "beats delivered to the tail");
     check_int(head_tx_cnt, len, "beats sent by the head");
     check_int(mid_tx_cnt, len, "beats forwarded by the middle");
-    check_int(finish_cnt[0], 1, "head reports exactly one xdma_finish_o");
-    // A middle or tail node raising a local finish means it was mistaken for the head.
-    check_int(finish_cnt[1], 0, "middle reports no local xdma_finish_o");
-    check_int(finish_cnt[2], 0, "tail reports no local xdma_finish_o");
+    // Exactly one node reports completion, and it is the one that OWNS the task, not the
+    // one that happens to sit at the head of the data flow. Reconflating the two -- the
+    // behaviour before `is_initiator` -- fails here: ChainGather would report on C0, which
+    // sourced the data and is not waiting for it, and never on C2, which is.
+    for (int unsigned n = 0; n < TbNumClusters; n++) begin
+      check_int(finish_cnt[n], (n == InitiatorNode) ? 1 : 0,
+                $sformatf("node %0d xdma_finish_o pulses (initiator is node %0d)", n,
+                          InitiatorNode));
+    end
 
     for (int unsigned i = 0; i < len; i++) begin
       if (tail_rx_q[i] !== beat(i)) begin
@@ -619,8 +656,8 @@ module tb_xdma_chain_3node ();
       $error("[TB] a stall watchdog latched during the run: %b", xdma_stall_error);
     end
 
-    if (errors == 0) $display("[TB] tb_xdma_chain_3node PASSED");
-    else $display("[TB] tb_xdma_chain_3node FAILED with %0d error(s)", errors);
+    if (errors == 0) $display("[TB] 3-node %s PASSED", ModeName);
+    else $display("[TB] 3-node %s FAILED with %0d error(s)", ModeName, errors);
     $finish;
   end
 

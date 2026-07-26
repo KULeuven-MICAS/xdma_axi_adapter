@@ -6,7 +6,7 @@ The xdma-axi-adapter is the interface between the xdma and the axi ports.
 ```bash
 source <your MICAS EDA env>   # QuestaSim
 make all                      # compile + run every testbench in $(TBS)
-make sim_gui TB=xdma_chain_3node
+make sim_gui TB=xdma_chain_gather_3node
 ```
 
 `scripts/compile_vsim.sh` passes the `xdma_axi_adapter_test` bender target, which is what
@@ -19,44 +19,51 @@ pulls this repo's own testbenches into the compile. Testbenches:
 | `tb_xdma_stall_watchdog` | the bring-up stall watchdog |
 | `tb_xdma_finish_manager_guard` | the `SpuriousFinishGuard` backstop, on and off |
 | `tb_xdma_axi_adapter_top` | 2 clusters: a plain remote write, wide **and** narrow bus |
-| `tb_xdma_chain_3node` | 3 clusters: a chained transfer, including the middle hop |
+| `tb_xdma_chain_write_3node` | 3 clusters, ChainWrite: initiator at the head |
+| `tb_xdma_chain_gather_3node` | 3 clusters, ChainGather: initiator at the tail |
+
+The two chain testbenches share `test/xdma_chain_3node_body.sv` and differ only in one
+parameter — which is the point: the transport is identical and only task ownership moves.
 
 Both multi-cluster testbenches wire the **narrow** AXI bus as well as the wide one. cfg,
 grant and finish all ride the narrow bus, so without it no transfer can complete.
 
 ## Chained transfers (ChainWrite / ChainGather)
 
-The adapter needs no changes to carry a linear, leaf-initiated ChainGather: the wide data
-path is payload-agnostic and all control decode comes from the accompany-cfg sideband,
-whose encodings are identical to ChainWrite's — head = `is_first_cw`, middles = neither,
-tail = `is_last_cw`. `tb_xdma_chain_3node` exercises that path end to end.
+**The data plane is identical in both modes.** The wide path is payload-agnostic and every
+control decode comes from the accompany-cfg sideband, whose position encodings are the same
+either way — head = `is_first_cw`, middles = neither, tail = `is_last_cw`.
+
+**The completion path is not**, and that is what `is_initiator` exists for. Position in the
+data flow says who must *forward* a finish; it does not say whose task it is. The two
+coincide for ChainWrite and are opposite for ChainGather, whose initiator is the collector
+at the tail — the node that sources none of the data and is the only one waiting for the
+answer.
 
 ### Example: a 3-node chain
 
 Three clusters, `ClusterBaseAddr = 0x1000_0000`, `ClusterAddressSpace = 0x0010_0000`,
 `MMIOSize = 16` — so `C0 = 0x1000_0000`, `C1 = 0x1010_0000`, `C2 = 0x1020_0000`.
 
-Roles are assigned by **position in the data flow**, not by cluster number and not by which
-core issued the task: whoever sources the stream is the head, whoever terminates it is the
-tail. The example below has the data flowing C0 → C1 → C2, so C0 is the head. A gather
-whose data flows the other way is the same picture with the labels swapped — C2 head, C0
-tail — and the RTL is indifferent to which, because every adapter instance is symmetric and
-its role comes entirely from the sideband.
+Roles are assigned by **position in the data flow**, not by cluster number: whoever sources
+the stream is the head, whoever terminates it is the tail. Data flows C0 → C1 → C2 below.
 
-> **The caller must be the head.** `xdma_finish_o` is raised only by the node carrying
-> `is_first_cw` (`xdma_finish_manager.sv`, FSM2). The tail sends its finish *backwards on
-> the wire* but never pulses its own core's finish — `tb_xdma_chain_3node` asserts exactly
-> that. So the core that issues the task has to sit at the source end of the stream. This is
-> what *leaf-initiated* means for ChainGather, and it is the reason the mode reuses
-> ChainWrite's completion path unchanged rather than an arbitrary naming choice.
->
-> A **root-initiated** gather — caller at the tail, data accumulating *towards* the caller —
-> transports perfectly well: nothing in the data path, addressing or grant logic is
-> direction-sensitive. But the caller's core would get no completion signal. That needs
-> either a Chisel-side completion (wait on the local writer going idle instead of on
-> `xdma_finish_o`) or a real RTL change: there is no bit today distinguishing "tail, and I
-> am the requester" from "tail, and I am just the recipient", so one would have to be added
-> to the accompany cfg and left inert for a ChainWrite tail.
+**Task ownership is a separate axis**, carried by `is_initiator`:
+
+|  | initiator | cfg walks | `xdma_finish_o` lands on |
+|---|---|---|---|
+| **ChainWrite** | the head | C0 → C2 | C0 — which also sourced the data |
+| **ChainGather** | the tail | C2 → C0 | C2 — the collector, which sourced nothing |
+
+`is_initiator` means *"this node issued the task, so raise `xdma_finish_o` on my core when
+the chain retires"*. Set it on the initiator's own sideband — the `to_remote` copy at a head,
+the `from_remote` copy at a tail — and clear it everywhere else. For ChainWrite it equals
+`is_first_cw`, so every pre-existing transfer is bit-compatible.
+
+Only `xdma_finish_manager` reads it, and it gates the *output*, not the FSM: a non-initiator
+head still runs its finish FSM to completion, because that is what releases its grant credit.
+The backwards finish cascade is byte-identical in both modes; only the node allowed to pulse
+its core changes.
 
 ```
         wide data          wide data
@@ -66,15 +73,15 @@ its role comes entirely from the sideband.
   ◄────────────── finish ◄────────────── finish        (narrow, backwards)
 ```
 
-**The sideband each node's XDMA must present.** This table is the *same* for ChainWrite and
-ChainGather — that is the whole point:
+**The sideband each node's XDMA must present.** Every column but the last is the *same* for
+ChainWrite and ChainGather:
 
-| node | port | `dma_type` | `src_addr` | `dst_addr` | `dma_length` | `is_first_cw` | `is_last_cw` |
-|---|---|---|---|---|---|---|---|
-| 0 head | `to_remote_data_accompany_cfg` | 1 | C0 | C1 | L | **1** | 0 |
-| 1 middle | `from_remote_data_accompany_cfg` | 1 | C0 | C1 | L | 0 | 0 |
-| 1 middle | `to_remote_data_accompany_cfg` | 1 | C1 | C2 | L | 0 | 0 |
-| 2 tail | `from_remote_data_accompany_cfg` | 1 | C1 | C2 | L | 0 | **1** |
+| node | port | `dma_type` | `src_addr` | `dst_addr` | `dma_length` | `is_first_cw` | `is_last_cw` | `is_initiator` |
+|---|---|---|---|---|---|---|---|---|
+| 0 head | `to_remote_data_accompany_cfg` | 1 | C0 | C1 | L | **1** | 0 | write: **1** / gather: 0 |
+| 1 middle | `from_remote_data_accompany_cfg` | 1 | C0 | C1 | L | 0 | 0 | 0 |
+| 1 middle | `to_remote_data_accompany_cfg` | 1 | C1 | C2 | L | 0 | 0 | 0 |
+| 2 tail | `from_remote_data_accompany_cfg` | 1 | C1 | C2 | L | 0 | **1** | write: 0 / gather: **1** |
 
 `ready_to_transfer` is a **level**, not a pulse: each node holds it for its whole
 participation window. The tail dropping its `ready_to_transfer` is what releases the finish
@@ -89,14 +96,14 @@ middle node, which is Chisel, not this repo:
 | **ChainWrite** | the incoming stream unchanged | receives a copy of the stream | writer busy |
 | **ChainGather** | incoming stream joined element-wise with data read from its own TCDM | untouched | reader / junction busy |
 
-The head and the tail behave the same in both modes: the head reads its local TCDM and
-sources the stream, the tail writes the stream it receives into its local TCDM. Only the
-middles differ, and only in the two ways above.
+
+The head reads its local TCDM and sources the stream; the tail writes what it receives into
+its local TCDM. Both are the same in either mode.
 
 An element-wise join keeps `dma_length` constant along the chain, which is why the same L
 appears at every hop above. The adapter never sees the local read or the join: it only sees
 bytes arriving on `from_remote_data` and bytes leaving on `to_remote_data`, and it never
-compares the two. `tb_xdma_chain_3node` models the junction with a plain FIFO for exactly
+compares the two. The chain testbenches model the junction with a plain FIFO for exactly
 this reason — from the adapter's side a FIFO and a reducer are indistinguishable.
 
 Note the busy level differs, and that is where both known ChainGather hazards live: a
@@ -122,10 +129,12 @@ finish −4 KiB):
 
 The grant cascade (3, 4) necessarily precedes the data (5, 6): a node's wide `aw_valid` and
 `w_valid` are gated on its grant credit, so the head cannot start until the credit has
-walked all the way back from the tail. Only the head raises `xdma_finish_o`; the middle and
-the tail must not.
+walked all the way back from the tail. Rows 1 and 2 reverse for ChainGather, where the
+initiator configures the chain outward from the tail; the other six are unchanged.
 
-See `run_chain()` in `test/tb_xdma_chain_3node.sv` for this sequence as executable code.
+Exactly one node raises `xdma_finish_o` — the initiator — and both chain testbenches assert
+that the other two stay silent. See `run_chain()` in `test/xdma_chain_3node_body.sv` for the
+whole sequence as executable code.
 
 ### Bring-up diagnostics
 
@@ -138,9 +147,12 @@ for:
   sticky output **`xdma_stall_error_o`** and prints which FSM in which instance gave up.
   Pick a few times the worst-case transfer length. `0` removes the logic entirely.
 * **`SpuriousFinishGuard`** (`xdma_axi_adapter_top`) — backstop against a ChainGather
-  middle node being mistaken for the chain head and raising a spurious `xdma_finish_o`.
-  The primary fix belongs in Chisel; see the parameter's comment in
-  `src/xdma_finish_manager.sv` for when enabling it here is the wrong call.
+  middle node being mistaken for the chain head. `is_initiator` already blocks the
+  core-visible symptom (a middle never owns the task), but not the latch itself: a
+  mis-triggered head FSM also releases a grant credit nothing reserved. That is what this
+  guard prevents, and what `tb_xdma_finish_manager_guard` measures. The primary fix belongs
+  in Chisel; see the parameter's comment in `src/xdma_finish_manager.sv` for when enabling
+  it here is the wrong call.
 
 # Author
 Fanchen Kong (fanchen.kong@kuleuven.be)

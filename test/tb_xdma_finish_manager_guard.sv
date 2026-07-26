@@ -11,13 +11,20 @@
 // ready_to_transfer=1, is_first_cw=1, is_last_cw=0). That is the shape FSM2 mistakes for
 // "I am the head".
 //
-//   Phase 1 (the hazard)  guard OFF -> FSM2 latches and later raises a spurious
-//                                      `xdma_finish_o` at this node's core
+// `is_initiator` already stops the *user-visible* half of this hazard: a middle hop never
+// owns the task, so its `xdma_finish_o` is gated off whatever FSM2 does. What it does NOT
+// stop is FSM2 latching in the first place -- and a latched FSM2 releases a grant credit
+// through `xdma_write_finish_o` that nothing reserved. That is what the guard prevents, and
+// what Phase 1 measures.
+//
+//   Phase 1 (the hazard)  guard OFF -> FSM2 latches and spuriously releases a grant credit
 //                         guard ON  -> FSM2 stays idle; the middle-hop finish forwarding
 //                                      (FSM3 -> `to_remote_finish_valid_o`) is untouched
-//   Phase 2 (regression)  a genuine chain head, receiving nothing, must still report
+//   Phase 2 (regression)  a genuine chain head that owns its task must still report
 //                         `xdma_finish_o` with the guard ON -- the guard must not make
 //                         the head path over-restrictive.
+//   Phase 3 (ownership)   a chain head that does NOT own the task -- a ChainGather head --
+//                         must stay silent while still releasing its grant credit.
 
 `timescale 1ns / 1ps
 module tb_xdma_finish_manager_guard ();
@@ -48,6 +55,7 @@ module tb_xdma_finish_manager_guard ();
     logic     ready_to_transfer;
     logic     is_first_cw;
     logic     is_last_cw;
+    logic     is_initiator;
   } tb_xdma_accompany_cfg_t;
 
   typedef struct packed {
@@ -129,11 +137,13 @@ module tb_xdma_finish_manager_guard ();
   //--------------------------------------
   int local_finish_cnt[2];
   int fwd_finish_cnt  [2];
+  int credit_cnt      [2];
   always @(posedge clk) begin
     if (rst_n) begin
       for (int i = 0; i < 2; i++) begin
         if (xdma_finish[i]) local_finish_cnt[i]++;
         if (to_remote_finish_valid[i] && to_remote_finish_ready) fwd_finish_cnt[i]++;
+        if (xdma_write_finish[i]) credit_cnt[i]++;
       end
     end
   end
@@ -152,6 +162,7 @@ module tb_xdma_finish_manager_guard ();
     for (int i = 0; i < 2; i++) begin
       local_finish_cnt[i] = 0;
       fwd_finish_cnt[i]   = 0;
+      credit_cnt[i]       = 0;
     end
   endtask
 
@@ -202,15 +213,27 @@ module tb_xdma_finish_manager_guard ();
     to_remote_cfg.ready_to_transfer <= 1'b1;
     to_remote_cfg.is_first_cw       <= 1'b1;
     to_remote_cfg.is_last_cw        <= 1'b0;
+    to_remote_cfg.is_initiator      <= 1'b0;  // a middle hop never owns the task
     repeat (3) @(posedge clk);
+
+    // The local reader finishes, so its window closes. This has to happen BEFORE the finish
+    // comes back, or FSM2 simply re-arms off the still-asserted window the moment it
+    // retires -- and would then carry a stale ownership bit into the next phase.
+    to_remote_cfg.ready_to_transfer <= 1'b0;
+    repeat (2) @(posedge clk);
 
     // The tail's finish arrives and travels back up the chain.
     deliver_finish(TbDmaId);
     repeat (3) @(posedge clk);
     #1ns;
 
-    check(local_finish_cnt[0], 1, "guard OFF: spurious local finish at the middle node");
-    check(local_finish_cnt[1], 0, "guard ON: local finish suppressed at the middle node");
+    // `is_initiator` covers the core-visible symptom on its own, guard or not.
+    check(local_finish_cnt[0], 0, "guard OFF: is_initiator blocks the spurious local finish");
+    check(local_finish_cnt[1], 0, "guard ON: no local finish at the middle node");
+    // What `is_initiator` does NOT cover: FSM2 latching, and then releasing a grant credit
+    // this node never reserved. Only the guard stops that.
+    check(credit_cnt[0], 2, "guard OFF: FSM2 latched, so a spurious grant credit is released");
+    check(credit_cnt[1], 1, "guard ON: only the legitimate middle-hop credit is released");
     // The middle-hop forwarding must be identical either way -- the guard only touches FSM2.
     check(fwd_finish_cnt[0], 1, "guard OFF: finish forwarded to the previous hop");
     check(fwd_finish_cnt[1], 1, "guard ON: finish forwarded to the previous hop");
@@ -224,14 +247,17 @@ module tb_xdma_finish_manager_guard ();
     //====================================================================
     // Phase 2 -- a genuine chain head must still report, guard or not
     //====================================================================
-    $display("[TB] Phase 2: genuine chain head, receiving nothing");
+    $display("[TB] Phase 2: genuine chain head that owns the task (ChainWrite)");
 
     to_remote_cfg.dma_id            <= TbDmaId;
     to_remote_cfg.dma_type          <= 1'b1;
     to_remote_cfg.ready_to_transfer <= 1'b1;
     to_remote_cfg.is_first_cw       <= 1'b1;
     to_remote_cfg.is_last_cw        <= 1'b0;
+    to_remote_cfg.is_initiator      <= 1'b1;
     repeat (3) @(posedge clk);
+    to_remote_cfg.ready_to_transfer <= 1'b0;  // the local reader is done
+    repeat (2) @(posedge clk);
 
     deliver_finish(TbDmaId);
     repeat (3) @(posedge clk);
@@ -239,6 +265,37 @@ module tb_xdma_finish_manager_guard ();
 
     check(local_finish_cnt[0], 1, "guard OFF: head reports finish");
     check(local_finish_cnt[1], 1, "guard ON: head still reports finish");
+
+    to_remote_cfg <= '0;
+    repeat (5) @(posedge clk);
+    clear_counters();
+
+    //====================================================================
+    // Phase 3 -- a head that does not own the task must stay silent
+    //====================================================================
+    // This is the ChainGather head: it sources the data, so FSM2 legitimately runs and must
+    // release its grant credit, but the core waiting for the answer is the collector at the
+    // far end. Gating the OUTPUT rather than the FSM is what makes both true at once.
+    $display("[TB] Phase 3: chain head that does not own the task (ChainGather)");
+
+    to_remote_cfg.dma_id            <= TbDmaId;
+    to_remote_cfg.dma_type          <= 1'b1;
+    to_remote_cfg.ready_to_transfer <= 1'b1;
+    to_remote_cfg.is_first_cw       <= 1'b1;
+    to_remote_cfg.is_last_cw        <= 1'b0;
+    to_remote_cfg.is_initiator      <= 1'b0;
+    repeat (3) @(posedge clk);
+    to_remote_cfg.ready_to_transfer <= 1'b0;  // the local reader is done
+    repeat (2) @(posedge clk);
+
+    deliver_finish(TbDmaId);
+    repeat (3) @(posedge clk);
+    #1ns;
+
+    check(local_finish_cnt[0], 0, "guard OFF: non-initiator head does not report");
+    check(local_finish_cnt[1], 0, "guard ON: non-initiator head does not report");
+    check(credit_cnt[0], 1, "guard OFF: non-initiator head still releases its grant credit");
+    check(credit_cnt[1], 1, "guard ON: non-initiator head still releases its grant credit");
 
     to_remote_cfg <= '0;
     repeat (5) @(posedge clk);

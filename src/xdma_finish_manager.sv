@@ -101,15 +101,29 @@ module xdma_finish_manager #(
   id_t   to_remote_dma_id_q;
   id_t   from_remote_dma_id_q;
   addr_t from_remote_addr_q;
+  // Ownership is captured with the id it belongs to, on the same enables. The finish
+  // arrives long after the accompany cfg that announced the transfer, and by then the
+  // sender datapath may already have dropped the sideband -- sampling `is_initiator`
+  // combinationally at that point would read whatever happens to be on the port.
+  logic  to_remote_is_initiator_q;
+  logic  from_remote_is_initiator_q;
   logic to_remote_dma_id_en, from_remote_dma_id_en, from_remote_addr_en;
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      to_remote_dma_id_q   <= '0;
-      from_remote_dma_id_q <= '0;
-      from_remote_addr_q   <= '0;
+      to_remote_dma_id_q        <= '0;
+      from_remote_dma_id_q      <= '0;
+      from_remote_addr_q        <= '0;
+      to_remote_is_initiator_q  <= 1'b0;
+      from_remote_is_initiator_q <= 1'b0;
     end else begin
-      if (to_remote_dma_id_en) to_remote_dma_id_q <= to_remote_data_accompany_cfg_i.dma_id;
-      if (from_remote_dma_id_en) from_remote_dma_id_q <= from_remote_data_accompany_cfg_i.dma_id;
+      if (to_remote_dma_id_en) begin
+        to_remote_dma_id_q       <= to_remote_data_accompany_cfg_i.dma_id;
+        to_remote_is_initiator_q <= to_remote_data_accompany_cfg_i.is_initiator;
+      end
+      if (from_remote_dma_id_en) begin
+        from_remote_dma_id_q       <= from_remote_data_accompany_cfg_i.dma_id;
+        from_remote_is_initiator_q <= from_remote_data_accompany_cfg_i.is_initiator;
+      end
       if (from_remote_addr_en) from_remote_addr_q <= from_remote_data_accompany_cfg_i.src_addr;
     end
   end
@@ -214,12 +228,28 @@ module xdma_finish_manager #(
     endcase
   end
 
-  // The simple arbitration signal for read_finish, write_finish to xdma_finish_o (finish arbitration)
-  assign xdma_finish_o = read_finish_valid | first_write_finish_valid;
+  // Completion to the local core. Position in the chain says who must FORWARD a finish;
+  // `is_initiator` says who must REPORT one. FSM2 (head) and FSM3's tail branch each offer
+  // a completion, and only the one whose node owns the task is allowed through:
+  //   ChainWrite  -- initiator is the head, so FSM2 reports and the tail stays quiet.
+  //   ChainGather -- initiator is the collector at the tail, so FSM3 reports and the head
+  //                  stays quiet, even though it is still the node that sourced the data.
+  // Gating the OUTPUT rather than the FSM matters: a non-initiator head must still run
+  // FSM2 to completion, because `xdma_write_finish_o` below is what releases its grant
+  // credit. The backwards finish cascade is identical in both modes.
+  logic tail_write_finish_valid;
+  assign xdma_finish_o = (tail_write_finish_valid & from_remote_is_initiator_q)
+                       | read_finish_valid
+                       | (first_write_finish_valid & to_remote_is_initiator_q);
   always_comb begin
     read_finish_ready = '0;
     first_write_finish_ready = '0;
-    if (read_finish_valid) read_finish_ready = '1;
+    // The tail's completion is a single cycle pinned to the outgoing-finish handshake, so
+    // it cannot wait its turn -- it takes the cycle, and the two level-held sources retry.
+    if (tail_write_finish_valid) begin
+      read_finish_ready = '0;
+      first_write_finish_ready = '0;
+    end else if (read_finish_valid) read_finish_ready = '1;
     else if (first_write_finish_valid) first_write_finish_ready = '1;
   end
 
@@ -243,6 +273,7 @@ module xdma_finish_manager #(
     from_remote_addr_en = 1'b0;
     to_remote_finish_valid_o = 1'b0;
     middle_last_write_finish_valid = 1'b0;
+    tail_write_finish_valid = 1'b0;
 
     case (last_write_current_state)
       WriteMiddleLastIdle: begin
@@ -275,7 +306,11 @@ module xdma_finish_manager #(
       WriteLastFinish: begin
         to_remote_finish_valid_o = 1'b1;
         if (to_remote_finish_ready_i) begin
-          last_write_next_state = WriteMiddleLastIdle;
+          // The chain retires here. Offer a local completion too -- it only reaches the
+          // core if this node owns the task (ChainGather's collector); for a ChainWrite
+          // tail `is_initiator` is 0 and this is inert.
+          tail_write_finish_valid = 1'b1;
+          last_write_next_state   = WriteMiddleLastIdle;
         end
       end
       SendToPreviousHop: begin
@@ -298,6 +333,8 @@ module xdma_finish_manager #(
   // There are two conditions to release the entry:
   // 1. The first write node (the first CW of a write task)
   // 2. The intermediate node in CW
+  // Deliberately NOT gated by `is_initiator`: releasing a grant credit is a transport
+  // obligation of every node that holds one, independent of who owns the task.
   assign xdma_write_finish_o = middle_last_write_finish_valid | first_write_finish_valid;
 
   //--------------------------------------

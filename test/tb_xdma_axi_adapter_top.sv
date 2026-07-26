@@ -6,7 +6,7 @@
 //
 // This is the degenerate chain -- head and tail with no middle hop, so the head carries
 // `is_first_cw` and the receiver carries `is_last_cw`. The middle-hop control path is
-// covered by `tb_xdma_chain_3node`.
+// covered by `tb_xdma_chain_write_3node` and `tb_xdma_chain_gather_3node`.
 //
 // Both AXI buses are wired. cfg, grant and finish all ride the narrow bus, so no transfer
 // can complete without it.
@@ -57,6 +57,7 @@ module tb_xdma_axi_adapter_top ();
     logic     ready_to_transfer;
     logic     is_first_cw;
     logic     is_last_cw;
+    logic     is_initiator;
   } tb_xdma_accompany_cfg_t;
 
   typedef struct packed {
@@ -403,6 +404,8 @@ module tb_xdma_axi_adapter_top ();
     to_remote_acfg[0].ready_to_transfer <= 1'b1;
     to_remote_acfg[0].is_first_cw       <= 1'b1;
     to_remote_acfg[0].is_last_cw        <= 1'b0;
+    // Node 0 issued this transfer, so it owns it as well as sourcing it.
+    to_remote_acfg[0].is_initiator      <= 1'b1;
     @(posedge clk);
 
     for (int unsigned i = 0; i < len; i++) begin
