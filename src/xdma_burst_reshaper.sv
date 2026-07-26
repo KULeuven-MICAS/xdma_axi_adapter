@@ -164,7 +164,14 @@ module xdma_burst_reshaper #(
     write_req_aw_desc_o.id = write_req_desc_i.dma_id;
     write_req_aw_desc_o.addr = write_req_desc_i.remote_addr;
     write_req_aw_desc_o.len = num_beats - 1;  // the minus 1 here is from Length = axLen + 1
-    write_req_aw_desc_o.size = 3'b110;  // 64B //TODO: Should compute from a function
+    // AWSIZE = log2(bytes-per-beat) MUST equal the instance's strobe width, or it is an AXI
+    // protocol violation: the wide instance (StrbWidth=64) needs 3'b110, the narrow CFG
+    // instance (StrbWidth=8) needs 3'b011. The old hardcoded 3'b110 was illegal on the narrow
+    // master (claims 64 B/beat on an 8-byte bus). It is inert in functional sim -- cache is
+    // hardcoded 0 below, so the downstream axi_dw_upsizer takes W_PASSTHROUGH (never reads
+    // AWSIZE), the memory endpoint places bytes from WSTRB, and no protocol checker runs -- but
+    // an FPGA AXI interconnect (SmartConnect) / axi_protocol_checker / synthesis DRC flags it.
+    write_req_aw_desc_o.size = 3'($clog2(StrbWidth));  // per-instance: 6 wide, 3 narrow
     write_req_aw_desc_o.burst = 2'b01;  // BURST TYPE
     write_req_aw_desc_o.cache = 3'b0;
     write_req_aw_desc_o.is_write_data = is_write_data;
