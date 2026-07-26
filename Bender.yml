@@ -39,3 +39,4 @@ sources:
       - test/tb_xdma_stall_watchdog.sv
       - test/tb_xdma_finish_manager_guard.sv
       - test/tb_xdma_axi_adapter_top.sv
+      - test/tb_xdma_chain_3node.sv

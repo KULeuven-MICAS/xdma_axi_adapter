@@ -9,7 +9,11 @@ TB_DIR        ?= tb
 TEST_DIR      ?= test
 VSIM_BUILDDIR ?= work-vsim
 TB            ?=
-TBS           ?= find_first_one_idx
+TBS           ?= find_first_one_idx \
+                 xdma_stall_watchdog \
+                 xdma_finish_manager_guard \
+                 xdma_axi_adapter_top \
+                 xdma_chain_3node
 
 SIM_TARGETS := $(addsuffix .log,$(addprefix sim-,$(TBS)))
 

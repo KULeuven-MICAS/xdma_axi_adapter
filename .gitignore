@@ -1,6 +1,8 @@
 .bender/
+build/
 tb/
 work-vsim/
+*.log
 Bender.lock
 .vscode/
 .metals
