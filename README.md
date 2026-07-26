@@ -34,8 +34,29 @@ tail = `is_last_cw`. `tb_xdma_chain_3node` exercises that path end to end.
 ### Example: a 3-node chain
 
 Three clusters, `ClusterBaseAddr = 0x1000_0000`, `ClusterAddressSpace = 0x0010_0000`,
-`MMIOSize = 16` — so `C0 = 0x1000_0000`, `C1 = 0x1010_0000`, `C2 = 0x1020_0000`. The head
-is the chain origin (the leaf), the tail is the destination.
+`MMIOSize = 16` — so `C0 = 0x1000_0000`, `C1 = 0x1010_0000`, `C2 = 0x1020_0000`.
+
+Roles are assigned by **position in the data flow**, not by cluster number and not by which
+core issued the task: whoever sources the stream is the head, whoever terminates it is the
+tail. The example below has the data flowing C0 → C1 → C2, so C0 is the head. A gather
+whose data flows the other way is the same picture with the labels swapped — C2 head, C0
+tail — and the RTL is indifferent to which, because every adapter instance is symmetric and
+its role comes entirely from the sideband.
+
+> **The caller must be the head.** `xdma_finish_o` is raised only by the node carrying
+> `is_first_cw` (`xdma_finish_manager.sv`, FSM2). The tail sends its finish *backwards on
+> the wire* but never pulses its own core's finish — `tb_xdma_chain_3node` asserts exactly
+> that. So the core that issues the task has to sit at the source end of the stream. This is
+> what *leaf-initiated* means for ChainGather, and it is the reason the mode reuses
+> ChainWrite's completion path unchanged rather than an arbitrary naming choice.
+>
+> A **root-initiated** gather — caller at the tail, data accumulating *towards* the caller —
+> transports perfectly well: nothing in the data path, addressing or grant logic is
+> direction-sensitive. But the caller's core would get no completion signal. That needs
+> either a Chisel-side completion (wait on the local writer going idle instead of on
+> `xdma_finish_o`) or a real RTL change: there is no bit today distinguishing "tail, and I
+> am the requester" from "tail, and I am just the recipient", so one would have to be added
+> to the accompany cfg and left inert for a ChainWrite tail.
 
 ```
         wide data          wide data
@@ -67,6 +88,10 @@ middle node, which is Chisel, not this repo:
 |---|---|---|---|
 | **ChainWrite** | the incoming stream unchanged | receives a copy of the stream | writer busy |
 | **ChainGather** | incoming stream joined element-wise with data read from its own TCDM | untouched | reader / junction busy |
+
+The head and the tail behave the same in both modes: the head reads its local TCDM and
+sources the stream, the tail writes the stream it receives into its local TCDM. Only the
+middles differ, and only in the two ways above.
 
 An element-wise join keeps `dma_length` constant along the chain, which is why the same L
 appears at every hop above. The adapter never sees the local read or the join: it only sees
