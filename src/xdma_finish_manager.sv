@@ -15,6 +15,33 @@ module xdma_finish_manager #(
     parameter type         xdma_from_remote_data_accompany_cfg_t = logic,
     parameter type         xdma_req_desc_t                       = logic,
     parameter type         xdma_to_remote_finish_t               = logic,
+    /// Belt-and-braces guard against the ChainGather spurious-finish hazard.
+    ///
+    /// FSM2 below decides "I am the head of a chained write" purely from the *to-remote*
+    /// accompany cfg (`dma_type & ready_to_transfer & is_first_cw & ~is_last_cw`). In
+    /// ChainWrite a middle node's reader never runs, so that branch is dead there. In
+    /// ChainGather a middle node's reader *does* run concurrently, and the Chisel side
+    /// derives `toRemoteAccompaniedCfg.readyToTransfer` from `readerBusy`
+    /// (`XDMADataPath.scala`) while `is_first_cw` reads 1 for a locally-originated reader
+    /// (`XDMACfgIO.scala`). If `readerBusy` rises even one cycle before the chained-write
+    /// condition, FSM2 latches `to_remote_dma_id_q`, enters WriteFirstBusy, waits forever
+    /// for an id-matched finish that is addressed to the real head, and eventually raises
+    /// a spurious `xdma_finish_o` at the middle node's core.
+    ///
+    /// With this parameter set, FSM2 additionally requires that this node is *not*
+    /// currently receiving a chained write -- a node taking delivery of one is by
+    /// definition not that chain's head.
+    ///
+    /// Default OFF: the primary fix belongs in Chisel (widen the
+    /// `toRemoteAccompaniedCfg` mux to cover the whole reader-busy window at a gather
+    /// node), and turning this on unconditionally would also block a node that is
+    /// legitimately the head of one task while receiving an unrelated chained write.
+    /// Enable it as a backstop during bring-up if the Chisel fix proves fiddly.
+    parameter bit          SpuriousFinishGuard                   = 1'b0,
+    /// Bring-up stall watchdog: consecutive cycles any of the three FSMs below may sit in
+    /// a non-idle state without advancing before `stall_error_o` latches. 0 (default)
+    /// removes the watchdog. See `xdma_stall_watchdog`.
+    parameter int unsigned StallTimeout                          = 0,
     //Dependent parameter
     parameter int unsigned LenWidth                              = $bits(len_t)
 ) (
@@ -40,7 +67,10 @@ module xdma_finish_manager #(
     output addr_t                                remote_addr_o,
     output id_t                                  from_remote_dma_id_o,
     output logic                                 to_remote_finish_valid_o,
-    input  logic                                 to_remote_finish_ready_i
+    input  logic                                 to_remote_finish_ready_i,
+    /// Sticky: one of the three FSMs stalled for `StallTimeout` cycles. Tied low when
+    /// the watchdog is disabled.
+    output logic                                 stall_error_o
 );
 
   xdma_to_remote_finish_t from_remote_finish;
@@ -142,16 +172,22 @@ module xdma_finish_manager #(
 
   // Two signals to send the write finish to XDMACtrl
   logic first_write_finish_valid, first_write_finish_ready;
+  // See `SpuriousFinishGuard` above: when enabled, a node that is currently taking
+  // delivery of a chained write cannot be mistaken for that chain's head.
+  logic not_receiving_chained_write;
+  assign not_receiving_chained_write =
+      ~SpuriousFinishGuard | ~from_remote_data_accompany_cfg_i.ready_to_transfer;
   always_comb begin
     first_write_next_state = first_write_current_state;
     first_write_finish_valid = 1'b0;
     to_remote_dma_id_en = 1'b0;
     case (first_write_current_state)
       WriteFirstIdle: begin
-        if (to_remote_data_accompany_cfg_i.dma_type && 
-        to_remote_data_accompany_cfg_i.ready_to_transfer && 
-        to_remote_data_accompany_cfg_i.is_first_cw && 
-        (~to_remote_data_accompany_cfg_i.is_last_cw)) begin
+        if (to_remote_data_accompany_cfg_i.dma_type &&
+        to_remote_data_accompany_cfg_i.ready_to_transfer &&
+        to_remote_data_accompany_cfg_i.is_first_cw &&
+        (~to_remote_data_accompany_cfg_i.is_last_cw) &&
+        not_receiving_chained_write) begin
           to_remote_dma_id_en = 1'b1;
           first_write_next_state = WriteFirstBusy;
         end
@@ -263,5 +299,55 @@ module xdma_finish_manager #(
   // 1. The first write node (the first CW of a write task)
   // 2. The intermediate node in CW
   assign xdma_write_finish_o = middle_last_write_finish_valid | first_write_finish_valid;
+
+  //--------------------------------------
+  // Bring-up stall watchdog
+  //--------------------------------------
+  // One watchdog per FSM: their busy states are independent, so a single OR of the three
+  // *stall levels* would never rearm and would fire spuriously. OR the *errors* instead.
+  // The waits being bounded here are the ones that hang a chain silently -- WriteFirstBusy
+  // (head waiting for the finish to come back around the chain) and WriteMiddleBusy
+  // (middle hop waiting for the next hop's finish) -- plus the read FSM for symmetry.
+  logic read_stalled, first_write_stalled, last_write_stalled;
+  logic read_stall_error, first_write_stall_error, last_write_stall_error;
+
+  assign read_stalled = (read_current_state != ReadIdle) &&
+                        (read_next_state == read_current_state);
+  assign first_write_stalled = (first_write_current_state != WriteFirstIdle) &&
+                               (first_write_next_state == first_write_current_state);
+  assign last_write_stalled = (last_write_current_state != WriteMiddleLastIdle) &&
+                              (last_write_next_state == last_write_current_state);
+
+  xdma_stall_watchdog #(
+      .Timeout(StallTimeout),
+      .Name   ("xdma_finish_manager.read")
+  ) i_read_stall_watchdog (
+      .clk_i        (clk_i),
+      .rst_ni       (rst_ni),
+      .stalled_i    (read_stalled),
+      .stall_error_o(read_stall_error)
+  );
+
+  xdma_stall_watchdog #(
+      .Timeout(StallTimeout),
+      .Name   ("xdma_finish_manager.first_write")
+  ) i_first_write_stall_watchdog (
+      .clk_i        (clk_i),
+      .rst_ni       (rst_ni),
+      .stalled_i    (first_write_stalled),
+      .stall_error_o(first_write_stall_error)
+  );
+
+  xdma_stall_watchdog #(
+      .Timeout(StallTimeout),
+      .Name   ("xdma_finish_manager.middle_last_write")
+  ) i_last_write_stall_watchdog (
+      .clk_i        (clk_i),
+      .rst_ni       (rst_ni),
+      .stalled_i    (last_write_stalled),
+      .stall_error_o(last_write_stall_error)
+  );
+
+  assign stall_error_o = read_stall_error | first_write_stall_error | last_write_stall_error;
 
 endmodule

@@ -68,6 +68,25 @@ module xdma_axi_adapter_top
     parameter int unsigned MMIOSize                        = 16,
 
     //==========================================================
+    // Diagnostics
+    //==========================================================
+    // Bring-up stall watchdog. Every wait in the adapter's control path is
+    // unbounded, so a chain hop that never completes hangs the whole chain with
+    // no diagnostic whatsoever. Set this to the number of consecutive cycles a
+    // control FSM may sit in a wait state without advancing before
+    // `xdma_stall_error_o` latches; 0 (default) removes the watchdog logic
+    // entirely. Pick a few times the worst-case transfer length — the wait
+    // states legitimately span a whole in-flight transfer.
+    parameter int unsigned StallTimeout                    = 0,
+    // Belt-and-braces guard against the ChainGather spurious-finish hazard:
+    // a middle node whose reader runs concurrently momentarily looks like the
+    // chain head and can raise a bogus `xdma_finish_o`. Default OFF; the
+    // primary fix belongs in Chisel. See the `SpuriousFinishGuard` parameter of
+    // `xdma_finish_manager` for the full rationale and for when enabling it is
+    // the wrong call.
+    parameter bit          SpuriousFinishGuard             = 1'b0,
+
+    //==========================================================
     // Derived widths — DO NOT OVERRIDE
     //   In the parameter list (rather than the body) because the port
     //   list below references them to size the packed-vector accompany-
@@ -115,6 +134,10 @@ module xdma_axi_adapter_top
     input  logic [AccompanyCfgBits-1:0]           from_remote_data_accompany_cfg_i,
     /// XDMA finish
     output logic                                  xdma_finish_o,
+    /// Sticky bring-up diagnostic: a control FSM in this adapter waited longer than
+    /// `StallTimeout` cycles without advancing (i.e. the chain is wedged). Tied low
+    /// when `StallTimeout == 0`. Safe to leave unconnected.
+    output logic                                  xdma_stall_error_o,
     // AXI Interface — system types from parameter
     // Wide
     output axi_wide_out_req_t                     axi_xdma_wide_out_req_o,
@@ -815,15 +838,18 @@ module xdma_axi_adapter_top
     to_remote_grant.from = from_remote_data_accompany_cfg.src_addr;
     to_remote_grant.reserved = '0;
   end
+  logic grant_manager_stall_error;
   xdma_grant_manager #(
-      .xdma_from_remote_data_accompany_cfg_t(xdma_from_remote_data_accompany_cfg_t)
+      .xdma_from_remote_data_accompany_cfg_t(xdma_from_remote_data_accompany_cfg_t),
+      .StallTimeout                         (StallTimeout)
   ) i_xdma_grant_manager (
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),
       .from_remote_grant_i             (grant),
       .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg),
       .to_remote_grant_valid_o         (to_remote_grant_valid),
-      .to_remote_grant_ready_i         (to_remote_grant_ready)
+      .to_remote_grant_ready_i         (to_remote_grant_ready),
+      .stall_error_o                   (grant_manager_stall_error)
   );
   //--------------------------------------
   // Receiver front end
@@ -1030,6 +1056,7 @@ module xdma_axi_adapter_top
   //-------------------------------------
   addr_t remote_addr;
   id_t   from_remote_dma_id;
+  logic  finish_manager_stall_error;
   xdma_finish_manager #(
       .id_t                                 (id_t),
       .len_t                                (len_t),
@@ -1038,7 +1065,9 @@ module xdma_axi_adapter_top
       .xdma_to_remote_data_accompany_cfg_t  (xdma_to_remote_data_accompany_cfg_t),
       .xdma_from_remote_data_accompany_cfg_t(xdma_from_remote_data_accompany_cfg_t),
       .xdma_req_desc_t                      (xdma_req_desc_t),
-      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t)
+      .xdma_to_remote_finish_t              (xdma_to_remote_finish_t),
+      .SpuriousFinishGuard                  (SpuriousFinishGuard),
+      .StallTimeout                         (StallTimeout)
   ) i_xdma_finish_manager (
       .clk_i                           (clk_i),
       .rst_ni                          (rst_ni),
@@ -1052,7 +1081,8 @@ module xdma_axi_adapter_top
       .remote_addr_o                   (remote_addr),
       .from_remote_dma_id_o            (from_remote_dma_id),
       .to_remote_finish_valid_o        (to_remote_finish_valid),
-      .to_remote_finish_ready_i        (to_remote_finish_ready)
+      .to_remote_finish_ready_i        (to_remote_finish_ready),
+      .stall_error_o                   (finish_manager_stall_error)
   );
   always_comb begin : proc_unpack_finish_desc
     //--------------------------------------
@@ -1071,5 +1101,37 @@ module xdma_axi_adapter_top
     to_remote_finish.dma_id = from_remote_dma_id;
     to_remote_finish.from = cluster_base_addr_i;
   end
+
+  //-------------------------------------
+  // Bring-up stall watchdog aggregation
+  //-------------------------------------
+  // Third observation point, next to the two control FSMs: the wide send path. It covers
+  // the failure the two FSM watchdogs cannot see -- W beats parked because the grant never
+  // arrived (`xdma_data_path.sv` gates `w_valid_o`/`write_req_data_ready_o` on
+  // `write_req_grant_i`), the burst reshaper stuck in FINISH waiting for
+  // `write_req_done_i`, and the beat count in `xdma_meta_manager` never reaching
+  // `dma_length`. "Claimed by a requester, but no beat moved and no completion" is the
+  // signature of all three.
+  //
+  // Note this also ticks during the *legitimate* gaps where the sender datapath simply has
+  // no data ready yet, so `StallTimeout` must sit comfortably above the longest such gap.
+  // It is a diagnostic, never a functional gate: nothing in this module reads
+  // `xdma_stall_error_o`.
+  logic wide_send_stalled;
+  logic wide_send_stall_error;
+  assign wide_send_stalled = wide_write_req_busy & ~wide_write_happening & ~wide_write_req_done;
+
+  xdma_stall_watchdog #(
+      .Timeout(StallTimeout),
+      .Name   ("xdma_axi_adapter_top.wide_send")
+  ) i_wide_send_stall_watchdog (
+      .clk_i        (clk_i),
+      .rst_ni       (rst_ni),
+      .stalled_i    (wide_send_stalled),
+      .stall_error_o(wide_send_stall_error)
+  );
+
+  assign xdma_stall_error_o =
+      grant_manager_stall_error | finish_manager_stall_error | wide_send_stall_error;
 
 endmodule : xdma_axi_adapter_top

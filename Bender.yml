@@ -14,6 +14,7 @@ sources:
 
   # Level 0
   - src/find_first_one_idx.sv
+  - src/xdma_stall_watchdog.sv
   - src/dw_up_converter.sv
   - src/dw_down_converter.sv
   - src/dw_converter.sv
@@ -35,4 +36,6 @@ sources:
       - test/tb_find_first_one_idx.sv
       - test/tb_xdma_meta_manager.sv
       - test/tb_xdma_burst_reshaper.sv
+      - test/tb_xdma_stall_watchdog.sv
+      - test/tb_xdma_finish_manager_guard.sv
       - test/tb_xdma_axi_adapter_top.sv
