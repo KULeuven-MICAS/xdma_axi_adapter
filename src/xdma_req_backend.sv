@@ -235,7 +235,15 @@ module xdma_req_backend #(
     axi_dma_req_o.aw.size  = current_req_aw_desc.size;
     axi_dma_req_o.aw.burst = current_req_aw_desc.burst;
     axi_dma_req_o.aw.cache = current_req_aw_desc.cache;
-    axi_dma_req_o.aw_valid = (current_req_aw_desc.is_write_data)? ~aw_emitter_empty && write_req_grant_i : ~aw_emitter_empty;
+    // A ToRemoteData (is_write_data) write MUST NOT assert its AW until its W data is ready
+    // (w_valid = grant && write_req_data_valid_i). Otherwise a cross-die chain MIDDLE node issues
+    // its data-forward AW to the NEXT hop the instant it receives its own grant -- before it has
+    // folded any data -- which locks that output port in the D2D write-aware router with no W to
+    // release it, and (via the single serialized soc->D2D stream + AXI W-ordering) blocks this
+    // node's OUTGOING grant to its PREV hop. The prev hop then never sends data, so the data W is
+    // never ready: deadlock. Gating AW on w_valid makes the grant win, breaking the cycle. Harmless
+    // for normal writes (data is already present, so w_valid is high and the AW is not delayed).
+    axi_dma_req_o.aw_valid = (current_req_aw_desc.is_write_data)? ~aw_emitter_empty && write_req_grant_i && w_valid : ~aw_emitter_empty;
     aw_emitter_pop         = axi_dma_resp_i.aw_ready & axi_dma_req_o.aw_valid;
     // B signals
     // we are always ready to accept b signals, as we do not need them
