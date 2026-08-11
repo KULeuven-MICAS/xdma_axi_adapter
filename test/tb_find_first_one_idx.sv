@@ -41,21 +41,24 @@ initial begin
         );
     end
 
-    // Test case 3: Multi-bit
+    // Test case 3: Multi-bit.
+    // `find_first_one_idx` resolves from the MSB down -- in the xdma narrow arbiter the
+    // inputs are (cfg=2, grant=1, finish=0) and cfg must win -- so the expected index of a
+    // multi-hot input is the HIGHEST set bit.
     if (TEST_WIDTH > 1) begin
-        // Lower bit 
+        // All bits set
         in_i = {TEST_WIDTH{1'b1}};
         #CLK_PERIOD;
         check_output(.expected_valid(1),
-                     .expected_idx(0),
+                     .expected_idx(TEST_WIDTH-1),
                      .case_num(3)
         );
 
-        // Middle bit
+        // Top and bottom bits set
         in_i = (1 << (TEST_WIDTH-1)) | 1;
         #CLK_PERIOD;
         check_output(.expected_valid(1),
-                     .expected_idx(0),
+                     .expected_idx(TEST_WIDTH-1),
                      .case_num(4)
         );
     end
@@ -107,8 +110,9 @@ task check_output(input bit expected_valid,
 endtask
 
 
+// Highest set bit -- see the note on test case 3.
 function int get_expected_index(logic [TEST_WIDTH-1:0] val);
-    for (int i=0; i<TEST_WIDTH; i++) begin
+    for (int i=TEST_WIDTH-1; i>=0; i--) begin
         if (val[i]) return i;
     end
     return 0;

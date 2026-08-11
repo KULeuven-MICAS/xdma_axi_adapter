@@ -24,11 +24,12 @@ module find_first_one_idx #(
       valid_o = |in_i;
       found   = 1'b0;
       for (int i = 0; i < N; i++) begin
-        // We search from the MSB to LSB
+        // We search from the MSB to LSB: the scan runs over indices N-1 down to 0, so the
+        // first match is the highest set bit and every index is inside the vector.
         // In our xdma case the narrow inputs are (cfg,grant,finish)
         // The cfg has the highest priority
-        if (!found && in_i[N-i]) begin
-          idx_o = LOG_N_INP'(N-i);
+        if (!found && in_i[N-1-i]) begin
+          idx_o = LOG_N_INP'(N-1-i);
           found = 1'b1;
         end
       end
