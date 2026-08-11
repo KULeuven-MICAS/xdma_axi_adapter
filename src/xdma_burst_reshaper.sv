@@ -169,8 +169,35 @@ module xdma_burst_reshaper #(
     // FPGA interconnect, an axi_protocol_checker or a synthesis DRC will flag. Derived from
     // StrbWidth so each instance is right by construction: 3'b110 wide, 3'b011 narrow.
     write_req_aw_desc_o.size = 3'($clog2(StrbWidth));  // per-instance: 6 wide, 3 narrow
-    write_req_aw_desc_o.burst = 2'b01;  // BURST TYPE
-    write_req_aw_desc_o.cache = 3'b0;
+    write_req_aw_desc_o.burst = 2'b01;  // BURST TYPE: INCR
+    // AxCACHE = 0010: bit 1 is `axi_pkg::CACHE_MODIFIABLE`, telling the interconnect it may
+    // reshape this burst. The other three bits stay 0 (non-bufferable, non-cacheable),
+    // which is what an MMIO-style target wants. 
+    //
+    // WHY MODIFIABLE. `axi_dw_upsizer` packs narrow beats into wide ones ONLY when
+    // `modifiable(aw.cache)` holds; otherwise it takes its passthrough branch and forwards
+    // the original `len`/`size` unchanged. The cross-cluster cfg frame is 512 bit but
+    // leaves the NARROW port as 8 x 64 bit beats (`to_remote_cfg_desc.dma_length =
+    // frame_length << WIDE_NARROW_DW_BITS` in xdma_axi_adapter_top). A cross-die cfg
+    // carries a foreign chip id, matches no rule in the SoC narrow crossbar, and therefore
+    // default-routes onto the narrow->wide bridge (`axi_dw_converter` 64->512) on its way
+    // to the D2D link. With AxCACHE = 0 that bridge spends 8 x 512 bit beats carrying 8
+    // useful bytes each; with the bit set it emits ONE full 64 B beat. Same bytes, 8x fewer
+    // beats across the wide crossbar and the die boundary.
+    //
+    // WHY IT IS SAFE. The packing is undone symmetrically at the far end: `axi_dw_downsizer`
+    // does NOT gate on `modifiable` -- it splits any INCR whose `size` exceeds the master
+    // width -- so the 64 B beat becomes 8 x 8 B beats at the original addresses, all inside
+    // the same 4 KiB cfg MMIO window, and the receiving `xdma_write_demux` /
+    // `i_cfg_dw_up_converter` reassemble exactly what they see today. The cfg base is 4 KiB
+    // aligned (MMIOCFGOffset), so a frame packs into whole wide beats with no partial head
+    // or tail.
+    //
+    // WHAT IS UNAFFECTED. `to_remote_grant` / `to_remote_finish` are single-beat
+    // (`dma_length = 1`, so `len == 0`) and a width converter never reshapes a single-beat
+    // burst. The wide `ToRemoteData` path is already at full width, so no converter packs
+    // it either; the bit is inert there.
+    write_req_aw_desc_o.cache = 4'b0010;
     write_req_aw_desc_o.is_write_data = is_write_data;
     //-----------------------
     // Create the W request
