@@ -51,6 +51,9 @@ sim_gui: $(TB_DIR)/${TB}.vsim.gui
 
 VSIM_BENDER_TARGET = -t simulation
 VSIM_BENDER_TARGET += -t test
+# Same target the batch flow needs: without it bender emits no testbench from this repo and
+# `make sim_gui TB=...` fails in vopt with "design unit not found". See Bender.yml.
+VSIM_BENDER_TARGET += -t xdma_axi_adapter_test
 
 VLOG_FLAGS += -svinputport=compat
 VLOG_FLAGS += -timescale 1ns/1ps

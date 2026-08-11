@@ -415,7 +415,7 @@ module xdma_axi_adapter_top
     //--------------------------------------
     // to remote cfg desc
     //--------------------------------------
-    // We still need the original 512bit to remote cfg to compose the desc
+    // The descriptor is composed from the full 512-bit cfg frame, not the narrowed stream
     // DMA ID
     to_remote_cfg_desc.dma_id = to_remote_cfg.dma_id;
     // DMA type
@@ -431,9 +431,8 @@ module xdma_axi_adapter_top
         address_is_main_mem(to_remote_cfg.writer_addr) ?
         get_main_mem_end_addr(to_remote_cfg.writer_addr) - MMIOCFGOffset :
         get_cluster_end_addr(to_remote_cfg.writer_addr) - MMIOCFGOffset;
-    // The cfg length is stored in the first frame.
-    // Since now we are using the narrow instead of the wide to send the cfg
-    // we need to multiple the 512/64 = 8 to the dma length
+    // The cfg length is carried in the first frame, counted in 512-bit frames. The cfg rides
+    // the NARROW bus, so scale it by 512/64 = 8 to get the beat count.
     to_remote_cfg_desc.dma_length = to_remote_cfg.frame_length << WIDE_NARROW_DW_BITS;
     // Ready to transfer logic: Is a FSM that counts the frames to determine the frame header
     // FSM will control cfg_ready_to_transfer signal when the first frame is there
@@ -462,8 +461,8 @@ module xdma_axi_adapter_top
     to_remote_data_desc.remote_addr = address_is_main_mem(to_remote_data_accompany_cfg.dst_addr) ?
         get_main_mem_end_addr(to_remote_data_accompany_cfg.dst_addr) - MMIODataOffset :
         get_cluster_end_addr(to_remote_data_accompany_cfg.dst_addr) - MMIODataOffset;
-    // A to_remote WRITE takes the sticky readiness as well as the live level, because the
-    // live pulse can drop before the req_manager reaches this input; see `wide_write_rtt_q`.
+    // A to_remote WRITE takes the sticky readiness as well as the live level: the live pulse
+    // can drop before the req_manager reaches this input. See `wide_write_rtt_q`.
     to_remote_data_desc.ready_to_transfer = to_remote_data_accompany_cfg.ready_to_transfer
         | (to_remote_data_accompany_cfg.dma_type & wide_write_rtt_q);
 
@@ -604,26 +603,25 @@ module xdma_axi_adapter_top
       .done_i     (wide_write_req_done)
   );
 
-  // Hold a to_remote WRITE's readiness pulse until the transfer completes.
+  // Holds a to_remote WRITE's readiness pulse until the transfer completes.
   //
   // The pulse comes from the sender datapath's `toRemoteAccompaniedCfg.readyToTransfer`, which
   // tracks `io.readerBusy`. On a short (single-64B-beat) remote write the reader finishes its
   // local read and drops readerBusy before the cross-cluster grant round trip completes, so
-  // without this latch the descriptor reads 0 by the time the req_manager is BUSY with the
-  // buffered beat: the AW descriptor is never pushed, aw_valid stays 0, the write never leaves
-  // the sender, and the sender core spins on FINISH_REMOTE waiting for a finish that cannot
-  // come.
+  // the level alone is already 0 by the time the req_manager is BUSY with the buffered beat.
+  // The descriptor would then read 0, the AW descriptor would never be pushed, aw_valid would
+  // stay 0, the write would never leave the sender, and the sender core would spin on
+  // FINISH_REMOTE waiting for a finish that cannot come.
   //
   // The latch tracks REAL readiness, not the req_manager's `busy` level. `busy` spans
-  // grant..done regardless of whether write data exists yet, so gating the AW on it would open
-  // a burst with nothing to feed it -- stalling the W channel mid-burst while holding the
-  // SHARED wide xbar, which starves the host's icache refills from spm_wide.
+  // grant..done regardless of whether write data exists yet, so gating the AW on it opens a
+  // burst with nothing to feed it -- stalling the W channel mid-burst while holding the SHARED
+  // wide xbar, which starves the host's icache refills from spm_wide.
   //
-  // SET TAKES PRIORITY OVER CLEAR. With the clear first, a readiness pulse landing in the
-  // same cycle as the previous transfer's `done` is swallowed -- and a one-cycle pulse is
-  // exactly the case this latch exists to catch, so back-to-back remote writes would drop
-  // the second one and hang the sender on FINISH_REMOTE. Setting first is safe: `done`
-  // belongs to the transfer that is ending, the pulse to the one starting.
+  // SET TAKES PRIORITY OVER CLEAR, so a pulse arriving in the same cycle as the previous
+  // transfer's `done` survives. A one-cycle pulse is exactly what this latch is for, and the
+  // two events belong to different transfers: `done` to the one ending, the pulse to the one
+  // starting. Clearing first would drop the second of two back-to-back remote writes.
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       wide_write_rtt_q <= 1'b0;
@@ -757,8 +755,8 @@ module xdma_axi_adapter_top
       .axi_dma_resp_i        (axi_xdma_wide_out_resp_i)
   );
   assign wide_write_req_data_valid = wide_write_req_valid;
-  // `ready_to_transfer` is sticky for to_remote WRITEs (see wide_write_rtt_q above), so this
-  // one gate serves both directions and keeps the AW tied to real data readiness.
+  // `ready_to_transfer` is sticky for to_remote WRITEs (see `wide_write_rtt_q` above), so one
+  // gate serves both directions and keeps the AW tied to real data readiness.
   assign wide_write_req_desc_valid = wide_write_req_desc.ready_to_transfer;
   assign wide_write_req_ready = wide_write_req_data_ready;
   ////--------------------------------------
@@ -820,14 +818,14 @@ module xdma_axi_adapter_top
   //--------------------------------------
   // Grant Manager
   //--------------------------------------
-  // Track the accompany cfg while no grant is being offered, and FREEZE it for as long as
+  // Tracks the accompany cfg while no grant is being offered, and freezes it for as long as
   // one is. `from_remote_data_accompany_cfg` is a live external level (the writer's busy
-  // state): if it moves on -- or goes to zero -- while the narrow req_manager is still
-  // working through this grant, the combinationally derived payload and address would
-  // change underneath an in-flight AXI transaction. A zeroed src_addr decodes to
+  // state) and may move on -- or go to zero -- while the narrow req_manager is still working
+  // through this grant; a combinationally derived payload and address would then change
+  // underneath an in-flight AXI transaction. A zeroed src_addr decodes to
   // get_cluster_end_addr(0) - MMIOGrantOffset, an unmapped address the SoC narrow xbar
-  // default-routes onto the narrow->wide bridge and wedges. The grant manager holds VALID
-  // for exactly this window, so gating the capture on it keeps the two in step.
+  // default-routes onto the narrow->wide bridge, wedging it. The grant manager holds VALID
+  // over exactly this window, so gating the capture on it keeps the two in step.
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       grant_payload_dma_id_q   <= '0;
@@ -1058,15 +1056,15 @@ module xdma_axi_adapter_top
   //-------------------------------------
   // Receive Finish FIFO
   //-------------------------------------
-  // The finish manager only raises READY in WriteFirstBusy / WriteMiddleBusy. Wired
-  // straight to the demux that made READY the AXI slave port's READY, so a finish arriving
-  // at any other moment -- late, duplicated, or simply ahead of the local FSM -- stalled
-  // the port and blocked the cfg and grant traffic queued behind it, for every task, until
-  // reset. Buffer it the same way the grant path already does: the port always retires the
-  // beat, and an unmatched finish waits here instead of in the interconnect. It is held
-  // rather than dropped because task ids are unique per task (the frontend's
-  // remoteSubmittedTaskIDCounter), so a finish that does not match yet still belongs to
-  // someone.
+  // Decouples the AXI slave port from the finish manager, which only raises READY in
+  // WriteFirstBusy / WriteMiddleBusy. Wired straight through, that READY would be the port's
+  // READY, so a finish arriving at any other moment -- late, duplicated, or simply ahead of
+  // the local FSM -- stalls the port and blocks the cfg and grant traffic queued behind it,
+  // for every task, until reset. With the buffer the port always retires the beat and an
+  // unmatched finish waits here rather than in the interconnect, exactly as the grant path
+  // above does. An unmatched finish is HELD, not dropped: task ids are unique per task (the
+  // frontend's remoteSubmittedTaskIDCounter), so one that does not match yet still belongs
+  // to someone.
   narrow_data_t from_remote_finish_buf;
   logic         finish_fifo_full;
   logic         finish_fifo_empty;

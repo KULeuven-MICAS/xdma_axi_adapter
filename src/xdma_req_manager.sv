@@ -94,9 +94,9 @@ module xdma_req_manager #(
       // Any of the valid is high, the next state is busy
       IDLE: if (grant_valid) next_state = BUSY;
       BUSY: if (done_i) next_state = IDLE;
-      // The 2-bit encoding leaves two unused states. Without this arm the
-      // `next_state = cur_state` default makes them absorbing, and this manager
-      // gates the whole narrow (cfg/grant/finish) or wide (data) port.
+      // The 2-bit encoding leaves two unused states. This arm keeps them from being
+      // absorbing: this manager gates a whole port -- narrow (cfg/grant/finish) or
+      // wide (data) -- so a trapped state takes that port with it.
       default: next_state = IDLE;
     endcase
   end

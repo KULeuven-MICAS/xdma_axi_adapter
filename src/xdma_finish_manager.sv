@@ -257,11 +257,9 @@ module xdma_finish_manager #(
 
   // Assign from_remote_finish_ready_o signal
   assign from_remote_finish_ready_o = last_write_current_state == WriteMiddleBusy | first_write_current_state == WriteFirstBusy;
-  // Assign xdma_write_finish_o signal
-  // This signal is used to the grant_manager to release the reserved entry
-  // There are two conditions to release the entry:
-  // 1. The first write node (the first CW of a write task)
-  // 2. The intermediate node in CW
+  // Releases the grant_manager's reserved entry. Two cases qualify:
+  // 1. the first write node (the first CW of a write task)
+  // 2. an intermediate node in a chained write
   assign xdma_write_finish_o = middle_last_write_finish_valid | first_write_finish_valid;
 
 endmodule

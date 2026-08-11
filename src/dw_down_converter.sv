@@ -61,15 +61,15 @@ module dw_down_converter #(
         case (cur_state)
         // Any of the valid is high, the next state is busy
         IDLE: if (valid_i) next_state = BUSY;
-        // The exit MUST be qualified by `ready_i`, exactly as `ready_o`, `counter_en` and
-        // `counter_clr` below already are.  Unqualified, a sink that deasserts `ready_i` on
-        // the FINAL beat still drops the FSM back to IDLE, where `counter_clr` resets the
-        // counter -- so the last beat is never delivered and, with `valid_i` still high, the
-        // whole INPUT_DW word is re-serialised from beat 0.  That both corrupts the stream
-        // (duplicated beats) and truncates the burst (no final beat => no w.last downstream),
-        // which strands an AXI write mid-burst and can deadlock the SoC narrow->wide bridge.
+        // The exit is qualified by `ready_i`, exactly as `ready_o`, `counter_en` and
+        // `counter_clr` below are. Unqualified, a sink that deasserts `ready_i` on the FINAL
+        // beat still drops the FSM to IDLE, where `counter_clr` resets the counter: the last
+        // beat is never delivered and, with `valid_i` still high, the whole INPUT_DW word is
+        // re-serialised from beat 0. That corrupts the stream with duplicated beats and
+        // truncates the burst -- no final beat means no w.last downstream -- stranding an AXI
+        // write mid-burst and deadlocking the SoC narrow->wide bridge.
         BUSY: if (ready_i && (counter_q == DOWN_RATIO - 1)) next_state = IDLE;
-        // Two states in a 2-bit encoding; keep the unused ones from being absorbing.
+        // Two states in a 2-bit encoding: this arm keeps the unused ones from trapping.
         default: next_state = IDLE;
         endcase
     end
