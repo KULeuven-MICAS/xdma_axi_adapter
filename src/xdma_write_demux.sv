@@ -60,11 +60,21 @@ module xdma_write_demux #(
       .default_idx_i   ('0)
   );
 
+  logic addr_decode_ok;
+  assign addr_decode_ok = addr_decode_valid && !addr_decode_error;
+
   always_comb begin : proc_compose_output
     oup_data_o = '0;
     oup_valid_o = '0;
     oup_data_o[oup_sel] = inp_data_i;
-    oup_valid_o[oup_sel] = inp_valid_i && (addr_decode_valid && !addr_decode_error);
-    inp_ready_o = oup_ready_i[oup_sel] && (addr_decode_valid && !addr_decode_error);
+    oup_valid_o[oup_sel] = inp_valid_i && addr_decode_ok;
+    // An unmapped address MUST still be handshaken. This demux sits directly behind the
+    // XDMA's AXI slave port: driving both VALID and READY low leaves the beat unable to
+    // ever retire, so the port stops accepting AW/W and never emits B. One stray access --
+    // a foreign chip id, a default-routed transaction, a debug write -- would then block
+    // the cfg, grant and finish traffic sharing that port, permanently. There is no error
+    // output to route to, so accept the beat and drop it: a lost stray write is recoverable,
+    // a wedged port is not.
+    inp_ready_o = addr_decode_ok ? oup_ready_i[oup_sel] : 1'b1;
   end
 endmodule

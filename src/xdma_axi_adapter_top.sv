@@ -407,6 +407,10 @@ module xdma_axi_adapter_top
   logic cfg_ready_to_transfer;
   // Sticky copy of the to_remote WRITE data-readiness pulse; see the always_ff below.
   logic wide_write_rtt_q;
+  // Frozen copy of the fields a to_remote grant is built from; see the always_ff below.
+  id_t   grant_payload_dma_id_q;
+  addr_t grant_payload_src_addr_q;
+  logic  grant_payload_dma_type_q;
   always_comb begin : proc_unpack_desc
     //--------------------------------------
     // to remote cfg desc
@@ -466,14 +470,18 @@ module xdma_axi_adapter_top
     //--------------------------------------
     // to remote grant desc
     //--------------------------------------
-    to_remote_grant_desc.dma_id = from_remote_data_accompany_cfg.dma_id;
+    // Built from the FROZEN copy of the accompany cfg, not the live one -- see
+    // `grant_payload_*_q` below.
+    to_remote_grant_desc.dma_id = grant_payload_dma_id_q;
     to_remote_grant_desc.dma_length = 1;
-    to_remote_grant_desc.dma_type = from_remote_data_accompany_cfg.dma_type;
+    to_remote_grant_desc.dma_type = grant_payload_dma_type_q;
     to_remote_grant_desc.remote_addr =
-        address_is_main_mem(from_remote_data_accompany_cfg.src_addr) ?
-        get_main_mem_end_addr(from_remote_data_accompany_cfg.src_addr) - MMIOGrantOffset :
-        get_cluster_end_addr(from_remote_data_accompany_cfg.src_addr) - MMIOGrantOffset;
-    to_remote_grant_desc.ready_to_transfer = from_remote_data_accompany_cfg.ready_to_transfer;
+        address_is_main_mem(grant_payload_src_addr_q) ?
+        get_main_mem_end_addr(grant_payload_src_addr_q) - MMIOGrantOffset :
+        get_cluster_end_addr(grant_payload_src_addr_q) - MMIOGrantOffset;
+    // The grant manager holds VALID until the handshake, so this is a stable level for the
+    // whole transaction rather than a live external one that can vanish mid-flight.
+    to_remote_grant_desc.ready_to_transfer = to_remote_grant_valid;
 
   end
 
@@ -610,14 +618,20 @@ module xdma_axi_adapter_top
   // grant..done regardless of whether write data exists yet, so gating the AW on it would open
   // a burst with nothing to feed it -- stalling the W channel mid-burst while holding the
   // SHARED wide xbar, which starves the host's icache refills from spm_wide.
+  //
+  // SET TAKES PRIORITY OVER CLEAR. With the clear first, a readiness pulse landing in the
+  // same cycle as the previous transfer's `done` is swallowed -- and a one-cycle pulse is
+  // exactly the case this latch exists to catch, so back-to-back remote writes would drop
+  // the second one and hang the sender on FINISH_REMOTE. Setting first is safe: `done`
+  // belongs to the transfer that is ending, the pulse to the one starting.
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      wide_write_rtt_q <= 1'b0;
-    end else if (wide_write_req_done) begin
       wide_write_rtt_q <= 1'b0;
     end else if (to_remote_data_accompany_cfg.ready_to_transfer
                  && to_remote_data_accompany_cfg.dma_type) begin
       wide_write_rtt_q <= 1'b1;
+    end else if (wide_write_req_done) begin
+      wide_write_rtt_q <= 1'b0;
     end
   end
 
@@ -806,9 +820,29 @@ module xdma_axi_adapter_top
   //--------------------------------------
   // Grant Manager
   //--------------------------------------
+  // Track the accompany cfg while no grant is being offered, and FREEZE it for as long as
+  // one is. `from_remote_data_accompany_cfg` is a live external level (the writer's busy
+  // state): if it moves on -- or goes to zero -- while the narrow req_manager is still
+  // working through this grant, the combinationally derived payload and address would
+  // change underneath an in-flight AXI transaction. A zeroed src_addr decodes to
+  // get_cluster_end_addr(0) - MMIOGrantOffset, an unmapped address the SoC narrow xbar
+  // default-routes onto the narrow->wide bridge and wedges. The grant manager holds VALID
+  // for exactly this window, so gating the capture on it keeps the two in step.
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      grant_payload_dma_id_q   <= '0;
+      grant_payload_src_addr_q <= '0;
+      grant_payload_dma_type_q <= 1'b0;
+    end else if (!to_remote_grant_valid) begin
+      grant_payload_dma_id_q   <= from_remote_data_accompany_cfg.dma_id;
+      grant_payload_src_addr_q <= from_remote_data_accompany_cfg.src_addr;
+      grant_payload_dma_type_q <= from_remote_data_accompany_cfg.dma_type;
+    end
+  end
+
   always_comb begin
-    to_remote_grant.dma_id = from_remote_data_accompany_cfg.dma_id;
-    to_remote_grant.from = from_remote_data_accompany_cfg.src_addr;
+    to_remote_grant.dma_id = grant_payload_dma_id_q;
+    to_remote_grant.from = grant_payload_src_addr_q;
     to_remote_grant.reserved = '0;
   end
   xdma_grant_manager #(
@@ -1022,6 +1056,47 @@ module xdma_axi_adapter_top
   assign grant_fifo_push = from_remote_grant_valid & !grant_fifo_full;
 
   //-------------------------------------
+  // Receive Finish FIFO
+  //-------------------------------------
+  // The finish manager only raises READY in WriteFirstBusy / WriteMiddleBusy. Wired
+  // straight to the demux that made READY the AXI slave port's READY, so a finish arriving
+  // at any other moment -- late, duplicated, or simply ahead of the local FSM -- stalled
+  // the port and blocked the cfg and grant traffic queued behind it, for every task, until
+  // reset. Buffer it the same way the grant path already does: the port always retires the
+  // beat, and an unmatched finish waits here instead of in the interconnect. It is held
+  // rather than dropped because task ids are unique per task (the frontend's
+  // remoteSubmittedTaskIDCounter), so a finish that does not match yet still belongs to
+  // someone.
+  narrow_data_t from_remote_finish_buf;
+  logic         finish_fifo_full;
+  logic         finish_fifo_empty;
+  logic         finish_fifo_push;
+  logic         finish_fifo_pop;
+  logic         from_remote_finish_buf_valid;
+  logic         from_remote_finish_buf_ready;
+
+  fifo_v3 #(
+      .dtype(narrow_data_t),
+      .DEPTH(3)
+  ) i_xdma_receive_finish_fifo (
+      .clk_i     (clk_i),
+      .rst_ni    (rst_ni),
+      .flush_i   (1'b0),
+      .testmode_i(1'b0),
+      .full_o    (finish_fifo_full),
+      .empty_o   (finish_fifo_empty),
+      .usage_o   (),
+      .data_i    (from_remote_finish),
+      .push_i    (finish_fifo_push),
+      .data_o    (from_remote_finish_buf),
+      .pop_i     (finish_fifo_pop)
+  );
+  assign from_remote_finish_ready     = !finish_fifo_full;
+  assign finish_fifo_push             = from_remote_finish_valid & !finish_fifo_full;
+  assign from_remote_finish_buf_valid = !finish_fifo_empty;
+  assign finish_fifo_pop              = !finish_fifo_empty & from_remote_finish_buf_ready;
+
+  //-------------------------------------
   // Finish Manager
   //-------------------------------------
   addr_t remote_addr;
@@ -1042,9 +1117,9 @@ module xdma_axi_adapter_top
       .xdma_write_finish_o             (xdma_write_finish),
       .to_remote_data_accompany_cfg_i  (to_remote_data_accompany_cfg),
       .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg),
-      .from_remote_finish_i            (from_remote_finish),
-      .from_remote_finish_valid_i      (from_remote_finish_valid),
-      .from_remote_finish_ready_o      (from_remote_finish_ready),
+      .from_remote_finish_i            (from_remote_finish_buf),
+      .from_remote_finish_valid_i      (from_remote_finish_buf_valid),
+      .from_remote_finish_ready_o      (from_remote_finish_buf_ready),
       .remote_addr_o                   (remote_addr),
       .from_remote_dma_id_o            (from_remote_dma_id),
       .to_remote_finish_valid_o        (to_remote_finish_valid),
