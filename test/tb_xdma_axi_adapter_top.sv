@@ -1,39 +1,54 @@
+// Authors:
+// - Fanchen Kong <fanchen.kong@kuleuven.be>
+// - Yunhao Deng <yunhao.deng@kuleuven.be>
+//
+// Two-cluster adapter testbench: a plain remote write, node 0 -> node 1.
+//
+// Head and tail with no middle hop, so the sender carries `is_first_cw` and the receiver
+// carries `is_last_cw`. Both AXI buses are wired through real crossbars, and cfg, grant
+// and finish all ride the narrow bus, so nothing here completes without the full control
+// round trip: cfg out, grant back, data out, finish back.
+//
+// That makes this the end-to-end cover for the narrow-port fixes -- the grant holding its
+// VALID with a frozen payload, and the receive finish FIFO -- which the unit testbenches
+// (tb_xdma_grant_hold, tb_xdma_finish_backpressure) only reach in isolation.
+
 `timescale 1ns / 1ps
 `include "axi/typedef.svh"
-`include "axi/assign.svh"
-module tb_xdma_axi_adapter_top ();
-  // Standalone-test typedefs. xdma_pkg has been retired; this tb owns
-  // its own protocol typedefs (mirrors the adapter's body).
-  localparam int unsigned TbMaxMemSizeKiB    = 32'd4096;
-  localparam int unsigned TbWordlineWidth    = 32'd64;
-  localparam int unsigned TbAxiAddrWidth     = 32'd48;
-  localparam int unsigned TbAxiWideDataWidth = 32'd512;
-  localparam int unsigned TbXDMAIdWidth       = 32'd4;
-  localparam int unsigned TbTotalFrameWidth  = 32'd4;
-  localparam int unsigned TbDMALengthWidth   =
-      $clog2(TbMaxMemSizeKiB) + 10 - $clog2(TbWordlineWidth/8);
-  localparam int unsigned TbFirstFrameRemainingPayloadWidth =
-      TbAxiWideDataWidth - 1 - TbTotalFrameWidth - TbXDMAIdWidth - 2*TbAxiAddrWidth;
 
-  typedef logic [TbXDMAIdWidth-1:0]                          tb_id_t;
-  typedef logic [TbAxiAddrWidth-1:0]                        tb_addr_t;
-  typedef logic [TbAxiWideDataWidth-1:0]                    tb_wide_data_t;
-  typedef logic [TbTotalFrameWidth-1:0]                     tb_frame_length_t;
-  typedef logic [TbFirstFrameRemainingPayloadWidth-1:0]     tb_first_frame_remaining_payload_t;
-  typedef logic [TbDMALengthWidth-1:0]                      tb_len_t;
+module tb_xdma_axi_adapter_top ();
+
+  //====================================================================
+  // Protocol typedefs (mirror xdma_axi_adapter_top's body)
+  //====================================================================
+  localparam int unsigned TbMaxMemSizeKiB      = 32'd4096;
+  localparam int unsigned TbWordlineWidth      = 32'd64;
+  localparam int unsigned TbAxiAddrWidth       = 32'd48;
+  localparam int unsigned TbAxiWideDataWidth   = 32'd512;
+  localparam int unsigned TbAxiNarrowDataWidth = 32'd64;
+  localparam int unsigned TbXDMAIdWidth        = 32'd4;
+  localparam int unsigned TbTotalFrameWidth    = 32'd4;
+  localparam int unsigned TbDMALengthWidth     =
+      $clog2(TbMaxMemSizeKiB) + 10 - $clog2(TbWordlineWidth / 8);
+  localparam int unsigned TbFirstFramePayloadWidth =
+      TbAxiWideDataWidth - 1 - TbTotalFrameWidth - TbXDMAIdWidth - 2 * TbAxiAddrWidth;
+
+  typedef logic [           TbXDMAIdWidth-1:0] tb_id_t;
+  typedef logic [          TbAxiAddrWidth-1:0] tb_addr_t;
+  typedef logic [      TbAxiWideDataWidth-1:0] tb_wide_data_t;
+  typedef logic [       TbTotalFrameWidth-1:0] tb_frame_length_t;
+  typedef logic [TbFirstFramePayloadWidth-1:0] tb_first_frame_payload_t;
+  typedef logic [        TbDMALengthWidth-1:0] tb_len_t;
 
   typedef struct packed {
-    tb_first_frame_remaining_payload_t first_frame_remaining_payload;
-    tb_addr_t                          writer_addr;
-    tb_addr_t                          reader_addr;
-    tb_id_t                            dma_id;
-    tb_frame_length_t                  frame_length;
-    logic                              dma_type;
+    tb_first_frame_payload_t first_frame_remaining_payload;
+    tb_addr_t                writer_addr;
+    tb_addr_t                reader_addr;
+    tb_id_t                  dma_id;
+    tb_frame_length_t        frame_length;
+    // dma_type: 0 = read, 1 = write
+    logic                    dma_type;
   } tb_xdma_inter_cluster_cfg_t;
-  typedef tb_wide_data_t tb_xdma_to_remote_data_t;
-  typedef tb_wide_data_t tb_xdma_from_remote_data_t;
-
-  typedef struct packed { int unsigned idx; tb_addr_t start_addr; tb_addr_t end_addr; } tb_rule_t;
 
   typedef struct packed {
     tb_id_t   dma_id;
@@ -45,125 +60,167 @@ module tb_xdma_axi_adapter_top ();
     logic     is_first_cw;
     logic     is_last_cw;
   } tb_xdma_accompany_cfg_t;
+
   typedef struct packed {
-    tb_id_t   dma_id;
-    logic     dma_type;
-    tb_addr_t remote_addr;
-    tb_len_t  dma_length;
-    logic     ready_to_transfer;
-  } tb_xdma_req_desc_t;
-  typedef struct packed {
-    tb_id_t  dma_id;
-    tb_len_t dma_length;
-  } tb_xdma_req_meta_t;
-  ///---------------------
-  /// AXI XBAR
-  ///---------------------
+    int unsigned idx;
+    tb_addr_t    start_addr;
+    tb_addr_t    end_addr;
+  } tb_rule_t;
+
+  //====================================================================
+  // System constants
+  //====================================================================
+  localparam int unsigned TbNumClusters       = 32'd2;
+  localparam tb_addr_t    ClusterBaseAddr     = 48'h1000_0000;
+  localparam tb_addr_t    ClusterAddressSpace = 48'h0010_0000;
+  localparam tb_addr_t    MainMemBaseAddr     = 48'h8000_0000;
+  localparam tb_addr_t    MainMemEndAddr      = 48'b1 << 32;
+  localparam int unsigned MMIOSize            = 16;
+
+  localparam time CyclTime   = 10ns;
+  localparam time SimTimeout = 1ms;
+
+  function automatic tb_addr_t cluster_base(input int unsigned i);
+    return ClusterBaseAddr + i * ClusterAddressSpace;
+  endfunction
+
+  //====================================================================
+  // Interconnect
+  //====================================================================
   localparam int unsigned TbAxiUserWidth = 32'd1;
-  localparam int unsigned TbNumClusters = 32'd2;
-  localparam int unsigned TbNumMasters = TbNumClusters;
-  localparam int unsigned TbNumSlaves = TbNumClusters;
-  localparam int unsigned TbPipeline = 32'd1;
-  localparam int unsigned TbWideIdWidthIn = 32'd8;
-  localparam bit TbUniqueIds = 1'b0;
-  // TbAxiAddrWidth/TbAxiWideDataWidth declared at the top of the tb.
-  localparam int unsigned TbAxiDataWidth = TbAxiWideDataWidth;
-  localparam int unsigned TbAxiStrbWidth = TbAxiDataWidth / 8;
-  localparam int unsigned TbWideIdWidthOut = $clog2(TbNumMasters) + TbWideIdWidthIn;
+  localparam int unsigned TbIdWidthIn    = 32'd8;
+  localparam int unsigned TbIdWidthOut   = $clog2(TbNumClusters) + TbIdWidthIn;
+  localparam int unsigned TbPipeline     = 32'd1;
 
-  typedef logic [TbWideIdWidthIn-1:0] id_dma_mst_t;
-  typedef logic [TbWideIdWidthOut-1:0] id_dma_slv_t;
-  typedef logic [TbAxiAddrWidth-1:0] addr_t;
-  typedef logic [TbAxiDataWidth-1:0] data_dma_t;
-  typedef logic [TbAxiStrbWidth-1:0] strb_dma_t;
-  typedef logic [TbAxiUserWidth-1:0] user_dma_t;
-  `AXI_TYPEDEF_ALL(axi_mst_dma, addr_t, id_dma_mst_t, data_dma_t, strb_dma_t, user_dma_t)
-  `AXI_TYPEDEF_ALL(axi_slv_dma, addr_t, id_dma_slv_t, data_dma_t, strb_dma_t, user_dma_t)
+  typedef logic [           TbIdWidthIn-1:0] id_mst_t;
+  typedef logic [          TbIdWidthOut-1:0] id_slv_t;
+  typedef logic [        TbAxiUserWidth-1:0] user_t;
+  typedef logic [    TbAxiWideDataWidth-1:0] data_wide_t;
+  typedef logic [  TbAxiWideDataWidth/8-1:0] strb_wide_t;
+  typedef logic [  TbAxiNarrowDataWidth-1:0] data_narrow_t;
+  typedef logic [TbAxiNarrowDataWidth/8-1:0] strb_narrow_t;
 
-  typedef tb_rule_t xbar_rule_t;
+  `AXI_TYPEDEF_ALL(axi_wide_mst, tb_addr_t, id_mst_t, data_wide_t, strb_wide_t, user_t)
+  `AXI_TYPEDEF_ALL(axi_wide_slv, tb_addr_t, id_slv_t, data_wide_t, strb_wide_t, user_t)
+  `AXI_TYPEDEF_ALL(axi_narrow_mst, tb_addr_t, id_mst_t, data_narrow_t, strb_narrow_t, user_t)
+  `AXI_TYPEDEF_ALL(axi_narrow_slv, tb_addr_t, id_slv_t, data_narrow_t, strb_narrow_t, user_t)
 
-  localparam axi_pkg::xbar_cfg_t DmaXbarCfg = '{
-      NoSlvPorts: TbNumMasters,
-      NoMstPorts: TbNumSlaves,
+  function automatic tb_rule_t [TbNumClusters-1:0] addr_map_gen();
+    for (int unsigned i = 0; i < TbNumClusters; i++) begin
+      addr_map_gen[i] = tb_rule_t'{
+          idx: i,
+          start_addr: ClusterBaseAddr + i * ClusterAddressSpace,
+          end_addr: ClusterBaseAddr + (i + 1) * ClusterAddressSpace
+      };
+    end
+  endfunction
+
+  localparam tb_rule_t [TbNumClusters-1:0] XbarRule = addr_map_gen();
+
+  localparam axi_pkg::xbar_cfg_t WideXbarCfg = '{
+      NoSlvPorts: TbNumClusters,
+      NoMstPorts: TbNumClusters,
       MaxMstTrans: 10,
       MaxSlvTrans: 6,
       FallThrough: 1'b0,
       LatencyMode: axi_pkg::CUT_ALL_AX,
       PipelineStages: TbPipeline,
-      AxiIdWidthSlvPorts: TbWideIdWidthIn,
-      AxiIdUsedSlvPorts: TbWideIdWidthIn,
-      UniqueIds: TbUniqueIds,
+      AxiIdWidthSlvPorts: TbIdWidthIn,
+      AxiIdUsedSlvPorts: TbIdWidthIn,
+      UniqueIds: 1'b0,
       AxiAddrWidth: TbAxiAddrWidth,
-      AxiDataWidth: TbAxiDataWidth,
-      NoAddrRules: TbNumSlaves
+      AxiDataWidth: TbAxiWideDataWidth,
+      NoAddrRules: TbNumClusters
   };
-  localparam addr_t ClusterBaseAddr = 'h1000_0000;
-  localparam addr_t ClusterAddressSpace = 'h0010_0000;
-  localparam addr_t MainMemBaseAddr = 'h8000_0000;
-  localparam addr_t MainEndBaseAddr = 48'b1 << 32;
-  localparam int MMIOSize = 16;
-  localparam xbar_rule_t [DmaXbarCfg.NoAddrRules-1:0] dma_xbar_rule = addr_map_gen(
-      ClusterBaseAddr, ClusterAddressSpace
-  );
 
-  function xbar_rule_t [DmaXbarCfg.NoAddrRules-1:0] addr_map_gen(input addr_t ClusterBaseAddr,
-                                                                 input addr_t ClusterAddressSpace);
-    for (int unsigned i = 0; i < DmaXbarCfg.NoAddrRules; i++) begin
-      addr_map_gen[i] = xbar_rule_t'{
-          idx: unsigned'(i),
-          start_addr: ClusterBaseAddr + i * ClusterAddressSpace,
-          end_addr: ClusterBaseAddr + (i + 1) * ClusterAddressSpace,
-          default: '0
-      };
-    end
-  endfunction
+  localparam axi_pkg::xbar_cfg_t NarrowXbarCfg = '{
+      NoSlvPorts: TbNumClusters,
+      NoMstPorts: TbNumClusters,
+      MaxMstTrans: 10,
+      MaxSlvTrans: 6,
+      FallThrough: 1'b0,
+      LatencyMode: axi_pkg::CUT_ALL_AX,
+      PipelineStages: TbPipeline,
+      AxiIdWidthSlvPorts: TbIdWidthIn,
+      AxiIdUsedSlvPorts: TbIdWidthIn,
+      UniqueIds: 1'b0,
+      AxiAddrWidth: TbAxiAddrWidth,
+      AxiDataWidth: TbAxiNarrowDataWidth,
+      NoAddrRules: TbNumClusters
+  };
+
   logic clk;
-  // DUT signals
   logic rst_n;
-  axi_mst_dma_req_t [TbNumMasters-1:0] wide_axi_mst_req;
-  axi_mst_dma_resp_t [TbNumMasters-1:0] wide_axi_mst_rsp;
-  axi_slv_dma_req_t [TbNumSlaves-1 : 0] wide_axi_slv_req;
-  axi_slv_dma_resp_t [TbNumSlaves-1 : 0] wide_axi_slv_rsp;
+
+  axi_wide_mst_req_t    [TbNumClusters-1:0] wide_mst_req;
+  axi_wide_mst_resp_t   [TbNumClusters-1:0] wide_mst_rsp;
+  axi_wide_slv_req_t    [TbNumClusters-1:0] wide_slv_req;
+  axi_wide_slv_resp_t   [TbNumClusters-1:0] wide_slv_rsp;
+  axi_narrow_mst_req_t  [TbNumClusters-1:0] narrow_mst_req;
+  axi_narrow_mst_resp_t [TbNumClusters-1:0] narrow_mst_rsp;
+  axi_narrow_slv_req_t  [TbNumClusters-1:0] narrow_slv_req;
+  axi_narrow_slv_resp_t [TbNumClusters-1:0] narrow_slv_rsp;
 
   axi_xbar #(
-      .Cfg(DmaXbarCfg),
-      .ATOPs(0),
-      .slv_aw_chan_t(axi_mst_dma_aw_chan_t),
-      .mst_aw_chan_t(axi_slv_dma_aw_chan_t),
-      .w_chan_t(axi_mst_dma_w_chan_t),
-      .slv_b_chan_t(axi_mst_dma_b_chan_t),
-      .mst_b_chan_t(axi_slv_dma_b_chan_t),
-      .slv_ar_chan_t(axi_mst_dma_ar_chan_t),
-      .mst_ar_chan_t(axi_slv_dma_ar_chan_t),
-      .slv_r_chan_t(axi_mst_dma_r_chan_t),
-      .mst_r_chan_t(axi_slv_dma_r_chan_t),
-      .slv_req_t(axi_mst_dma_req_t),
-      .slv_resp_t(axi_mst_dma_resp_t),
-      .mst_req_t(axi_slv_dma_req_t),
-      .mst_resp_t(axi_slv_dma_resp_t),
-      .rule_t(xbar_rule_t)
-  ) i_axi_dma_xbar (
-      .clk_i(clk),
-      .rst_ni(rst_n),
-      .test_i(1'b0),
-      .slv_ports_req_i(wide_axi_mst_req),
-      .slv_ports_resp_o(wide_axi_mst_rsp),
-      .mst_ports_req_o(wide_axi_slv_req),
-      .mst_ports_resp_i(wide_axi_slv_rsp),
-      .addr_map_i(dma_xbar_rule),
+      .Cfg          (WideXbarCfg),
+      .ATOPs        (0),
+      .slv_aw_chan_t(axi_wide_mst_aw_chan_t),
+      .mst_aw_chan_t(axi_wide_slv_aw_chan_t),
+      .w_chan_t     (axi_wide_mst_w_chan_t),
+      .slv_b_chan_t (axi_wide_mst_b_chan_t),
+      .mst_b_chan_t (axi_wide_slv_b_chan_t),
+      .slv_ar_chan_t(axi_wide_mst_ar_chan_t),
+      .mst_ar_chan_t(axi_wide_slv_ar_chan_t),
+      .slv_r_chan_t (axi_wide_mst_r_chan_t),
+      .mst_r_chan_t (axi_wide_slv_r_chan_t),
+      .slv_req_t    (axi_wide_mst_req_t),
+      .slv_resp_t   (axi_wide_mst_resp_t),
+      .mst_req_t    (axi_wide_slv_req_t),
+      .mst_resp_t   (axi_wide_slv_resp_t),
+      .rule_t       (tb_rule_t)
+  ) i_wide_xbar (
+      .clk_i                (clk),
+      .rst_ni               (rst_n),
+      .test_i               (1'b0),
+      .slv_ports_req_i      (wide_mst_req),
+      .slv_ports_resp_o     (wide_mst_rsp),
+      .mst_ports_req_o      (wide_slv_req),
+      .mst_ports_resp_i     (wide_slv_rsp),
+      .addr_map_i           (XbarRule),
       .en_default_mst_port_i('0),
-      .default_mst_port_i('0)
+      .default_mst_port_i   ('0)
   );
-  // -------------
-  // DUT signals
-  // -------------
-  localparam time CyclTime = 10ns;
-  localparam time ApplTime = 2ns;
-  localparam time TestTime = 8ns;
 
-  //-----------------------------------
-  // Clock generator
-  //-----------------------------------
+  axi_xbar #(
+      .Cfg          (NarrowXbarCfg),
+      .ATOPs        (0),
+      .slv_aw_chan_t(axi_narrow_mst_aw_chan_t),
+      .mst_aw_chan_t(axi_narrow_slv_aw_chan_t),
+      .w_chan_t     (axi_narrow_mst_w_chan_t),
+      .slv_b_chan_t (axi_narrow_mst_b_chan_t),
+      .mst_b_chan_t (axi_narrow_slv_b_chan_t),
+      .slv_ar_chan_t(axi_narrow_mst_ar_chan_t),
+      .mst_ar_chan_t(axi_narrow_slv_ar_chan_t),
+      .slv_r_chan_t (axi_narrow_mst_r_chan_t),
+      .mst_r_chan_t (axi_narrow_slv_r_chan_t),
+      .slv_req_t    (axi_narrow_mst_req_t),
+      .slv_resp_t   (axi_narrow_mst_resp_t),
+      .mst_req_t    (axi_narrow_slv_req_t),
+      .mst_resp_t   (axi_narrow_slv_resp_t),
+      .rule_t       (tb_rule_t)
+  ) i_narrow_xbar (
+      .clk_i                (clk),
+      .rst_ni               (rst_n),
+      .test_i               (1'b0),
+      .slv_ports_req_i      (narrow_mst_req),
+      .slv_ports_resp_o     (narrow_mst_rsp),
+      .mst_ports_req_o      (narrow_slv_req),
+      .mst_ports_resp_i     (narrow_slv_rsp),
+      .addr_map_i           (XbarRule),
+      .en_default_mst_port_i('0),
+      .default_mst_port_i   ('0)
+  );
+
   clk_rst_gen #(
       .ClkPeriod   (CyclTime),
       .RstClkCycles(5)
@@ -171,358 +228,252 @@ module tb_xdma_axi_adapter_top ();
       .clk_o (clk),
       .rst_no(rst_n)
   );
-  ///---------------------
-  /// XDMA AXI Interface
-  ///---------------------
-  // Now we only simulate two clusers
-  // which is enough to test the whole system
 
-  /// XDMA signals
+  //====================================================================
+  // Adapters
+  //====================================================================
+  tb_xdma_inter_cluster_cfg_t [TbNumClusters-1:0] to_remote_cfg;
+  logic                       [TbNumClusters-1:0] to_remote_cfg_valid;
+  tb_xdma_accompany_cfg_t     [TbNumClusters-1:0] to_remote_acfg;
+  tb_xdma_accompany_cfg_t     [TbNumClusters-1:0] from_remote_acfg;
+  logic                       [TbNumClusters-1:0] from_remote_cfg_ready;
+  logic                       [TbNumClusters-1:0] from_remote_data_ready;
+  assign from_remote_cfg_ready  = '1;
+  assign from_remote_data_ready = '1;
+
+  logic [TbNumClusters-1:0] to_remote_cfg_ready;
+  logic [TbNumClusters-1:0] to_remote_data_ready;
+  logic [TbNumClusters-1:0][TbAxiWideDataWidth-1:0] from_remote_cfg;
+  logic [TbNumClusters-1:0] from_remote_cfg_valid;
+  logic [TbNumClusters-1:0][TbAxiWideDataWidth-1:0] from_remote_data;
+  logic [TbNumClusters-1:0] from_remote_data_valid;
   logic [TbNumClusters-1:0] xdma_finish;
-  ///---------------------
-  /// TO REMOTE
-  ///---------------------
-  // to remote cfg
-  tb_xdma_inter_cluster_cfg_t [TbNumClusters-1:0] xdma_to_remote_cfg;
-  logic [TbNumClusters-1:0] xdma_to_remote_cfg_valid;
-  logic [TbNumClusters-1:0] xdma_to_remote_cfg_ready;
-  // to remote data
-  tb_xdma_to_remote_data_t [TbNumClusters-1:0] xdma_to_remote_data;
-  logic [TbNumClusters-1:0] xdma_to_remote_data_valid;
-  logic [TbNumClusters-1:0] xdma_to_remote_data_ready;
-  // to remote accompany cfg
-  tb_xdma_accompany_cfg_t [TbNumClusters-1:0] xdma_to_remote_data_accompany_cfg;
-  ///---------------------
-  /// FROM REMOTE
-  ///---------------------
-  // from remote cfg
-  tb_xdma_inter_cluster_cfg_t [TbNumClusters-1:0] xdma_from_remote_cfg;
-  logic [TbNumClusters-1:0] xdma_from_remote_cfg_valid;
-  logic [TbNumClusters-1:0] xdma_from_remote_cfg_ready;
-  // from remote data
-  tb_xdma_from_remote_data_t [TbNumClusters-1:0] xdma_from_remote_data;
-  logic [TbNumClusters-1:0] xdma_from_remote_data_valid;
-  logic [TbNumClusters-1:0] xdma_from_remote_data_ready;
-  // from remote data accompany cfg
-  tb_xdma_accompany_cfg_t [TbNumClusters-1:0] xdma_from_remote_data_accompany_cfg;
 
-  // AXI adapter tops — slim API: only meta params + AXI types + cluster cfgs.
-  xdma_axi_adapter_top #(
-      // Meta
-      .MaxMemSizeKiB         (TbMaxMemSizeKiB),
-      .WordlineWidth         (TbWordlineWidth),
-      // System AXI types (tb wires only the wide bus; narrow uses defaults)
-      .WideAXIIdWidth        ($bits(id_dma_slv_t)),
-      .axi_wide_out_req_t    (axi_mst_dma_req_t),
-      .axi_wide_out_resp_t   (axi_mst_dma_resp_t),
-      .axi_wide_in_req_t     (axi_slv_dma_req_t),
-      .axi_wide_in_resp_t    (axi_slv_dma_resp_t),
-      // Cluster cfgs
-      .ClusterBaseAddr       (ClusterBaseAddr),
-      .ClusterAddressSpace   (ClusterAddressSpace),
-      .MainMemBaseAddr       (MainMemBaseAddr),
-      .MainMemEndAddr        (MainEndBaseAddr),
-      .MMIOSize              (MMIOSize)
-  ) i_xdma_axi_adapter_0 (
-      .clk_i                           (clk),
-      .rst_ni                          (rst_n),
-      .cluster_base_addr_i             (ClusterBaseAddr),
-      // To remote cfg
-      .to_remote_cfg_i                 (xdma_to_remote_cfg[0]),
-      .to_remote_cfg_valid_i           (xdma_to_remote_cfg_valid[0]),
-      .to_remote_cfg_ready_o           (xdma_to_remote_cfg_ready[0]),
-      // to remote data
-      .to_remote_data_i                (xdma_to_remote_data[0]),
-      .to_remote_data_valid_i          (xdma_to_remote_data_valid[0]),
-      .to_remote_data_ready_o          (xdma_to_remote_data_ready[0]),
-      // to remote data accompany cfg
-      .to_remote_data_accompany_cfg_i  (xdma_to_remote_data_accompany_cfg[0]),
-      // from remote cfg
-      .from_remote_cfg_o               (xdma_from_remote_cfg[0]),
-      .from_remote_cfg_valid_o         (xdma_from_remote_cfg_valid[0]),
-      .from_remote_cfg_ready_i         (xdma_from_remote_cfg_ready[0]),
-      // from remote data
-      .from_remote_data_o              (xdma_from_remote_data[0]),
-      .from_remote_data_valid_o        (xdma_from_remote_data_valid[0]),
-      .from_remote_data_ready_i        (xdma_from_remote_data_ready[0]),
-      // from remote data accompany cfg
-      .from_remote_data_accompany_cfg_i(xdma_from_remote_data_accompany_cfg[0]),
-      // xdma finish
-      .xdma_finish_o                   (xdma_finish[0]),
-      // AXI interface
-      .axi_xdma_wide_out_req_o         (wide_axi_mst_req[0]),
-      .axi_xdma_wide_out_resp_i        (wide_axi_mst_rsp[0]),
-      .axi_xdma_wide_in_req_i          (wide_axi_slv_req[0]),
-      .axi_xdma_wide_in_resp_o         (wide_axi_slv_rsp[0])
-  );
+  // Only node 0 sources payload; node 1 is the sink.
+  tb_wide_data_t head_data;
+  logic          head_valid;
+  wire [TbNumClusters-1:0][TbAxiWideDataWidth-1:0] to_remote_data;
+  wire [TbNumClusters-1:0]                         to_remote_data_valid;
+  assign to_remote_data[0]       = head_data;
+  assign to_remote_data[1]       = '0;
+  assign to_remote_data_valid[0] = head_valid;
+  assign to_remote_data_valid[1] = 1'b0;
 
-  xdma_axi_adapter_top #(
-      // Meta
-      .MaxMemSizeKiB         (TbMaxMemSizeKiB),
-      .WordlineWidth         (TbWordlineWidth),
-      // System AXI types
-      .WideAXIIdWidth        ($bits(id_dma_slv_t)),
-      .axi_wide_out_req_t    (axi_mst_dma_req_t),
-      .axi_wide_out_resp_t   (axi_mst_dma_resp_t),
-      .axi_wide_in_req_t     (axi_slv_dma_req_t),
-      .axi_wide_in_resp_t    (axi_slv_dma_resp_t),
-      // Cluster cfgs
-      .ClusterBaseAddr       (ClusterBaseAddr),
-      .ClusterAddressSpace   (ClusterAddressSpace),
-      .MainMemBaseAddr       (MainMemBaseAddr),
-      .MainMemEndAddr        (MainEndBaseAddr),
-      .MMIOSize              (MMIOSize)
-  ) i_xdma_axi_adapter_1 (
-      .clk_i                           (clk),
-      .rst_ni                          (rst_n),
-      .cluster_base_addr_i             (ClusterBaseAddr + 1 * ClusterAddressSpace),
-      // To remote cfg
-      .to_remote_cfg_i                 (xdma_to_remote_cfg[1]),
-      .to_remote_cfg_valid_i           (xdma_to_remote_cfg_valid[1]),
-      .to_remote_cfg_ready_o           (xdma_to_remote_cfg_ready[1]),
-      // to remote data
-      .to_remote_data_i                (xdma_to_remote_data[1]),
-      .to_remote_data_valid_i          (xdma_to_remote_data_valid[1]),
-      .to_remote_data_ready_o          (xdma_to_remote_data_ready[1]),
-      // to remote data accompany cfg
-      .to_remote_data_accompany_cfg_i  (xdma_to_remote_data_accompany_cfg[1]),
-      // from remote cfg
-      .from_remote_cfg_o               (xdma_from_remote_cfg[1]),
-      .from_remote_cfg_valid_o         (xdma_from_remote_cfg_valid[1]),
-      .from_remote_cfg_ready_i         (xdma_from_remote_cfg_ready[1]),
-      // from remote data
-      .from_remote_data_o              (xdma_from_remote_data[1]),
-      .from_remote_data_valid_o        (xdma_from_remote_data_valid[1]),
-      .from_remote_data_ready_i        (xdma_from_remote_data_ready[1]),
-      // from remote data accompany cfg
-      .from_remote_data_accompany_cfg_i(xdma_from_remote_data_accompany_cfg[1]),
-      //
-      .xdma_finish_o                   (xdma_finish[1]),
-      // AXI interface
-      .axi_xdma_wide_out_req_o         (wide_axi_mst_req[1]),
-      .axi_xdma_wide_out_resp_i        (wide_axi_mst_rsp[1]),
-      .axi_xdma_wide_in_req_i          (wide_axi_slv_req[1]),
-      .axi_xdma_wide_in_resp_o         (wide_axi_slv_rsp[1])
-  );
+  for (genvar i = 0; i < TbNumClusters; i++) begin : gen_adapter
+    xdma_axi_adapter_top #(
+        .MaxMemSizeKiB        (TbMaxMemSizeKiB),
+        .WordlineWidth        (TbWordlineWidth),
+        .WideAXIIdWidth       (TbIdWidthOut),
+        .NarrowAXIIdWidth     (TbIdWidthOut),
+        .axi_wide_out_req_t   (axi_wide_mst_req_t),
+        .axi_wide_out_resp_t  (axi_wide_mst_resp_t),
+        .axi_wide_in_req_t    (axi_wide_slv_req_t),
+        .axi_wide_in_resp_t   (axi_wide_slv_resp_t),
+        .axi_narrow_out_req_t (axi_narrow_mst_req_t),
+        .axi_narrow_out_resp_t(axi_narrow_mst_resp_t),
+        .axi_narrow_in_req_t  (axi_narrow_slv_req_t),
+        .axi_narrow_in_resp_t (axi_narrow_slv_resp_t),
+        .ClusterBaseAddr      (ClusterBaseAddr),
+        .ClusterAddressSpace  (ClusterAddressSpace),
+        .MainMemBaseAddr      (MainMemBaseAddr),
+        .MainMemEndAddr       (MainMemEndAddr),
+        .MMIOSize             (MMIOSize)
+    ) i_dut (
+        .clk_i                           (clk),
+        .rst_ni                          (rst_n),
+        .cluster_base_addr_i             (cluster_base(i)),
+        .to_remote_cfg_i                 (to_remote_cfg[i]),
+        .to_remote_cfg_valid_i           (to_remote_cfg_valid[i]),
+        .to_remote_cfg_ready_o           (to_remote_cfg_ready[i]),
+        .to_remote_data_i                (to_remote_data[i]),
+        .to_remote_data_valid_i          (to_remote_data_valid[i]),
+        .to_remote_data_ready_o          (to_remote_data_ready[i]),
+        .to_remote_data_accompany_cfg_i  (to_remote_acfg[i]),
+        .from_remote_cfg_o               (from_remote_cfg[i]),
+        .from_remote_cfg_valid_o         (from_remote_cfg_valid[i]),
+        .from_remote_cfg_ready_i         (from_remote_cfg_ready[i]),
+        .from_remote_data_o              (from_remote_data[i]),
+        .from_remote_data_valid_o        (from_remote_data_valid[i]),
+        .from_remote_data_ready_i        (from_remote_data_ready[i]),
+        .from_remote_data_accompany_cfg_i(from_remote_acfg[i]),
+        .xdma_finish_o                   (xdma_finish[i]),
+        .axi_xdma_wide_out_req_o         (wide_mst_req[i]),
+        .axi_xdma_wide_out_resp_i        (wide_mst_rsp[i]),
+        .axi_xdma_wide_in_req_i          (wide_slv_req[i]),
+        .axi_xdma_wide_in_resp_o         (wide_slv_rsp[i]),
+        .axi_xdma_narrow_out_req_o       (narrow_mst_req[i]),
+        .axi_xdma_narrow_out_resp_i      (narrow_mst_rsp[i]),
+        .axi_xdma_narrow_in_req_i        (narrow_slv_req[i]),
+        .axi_xdma_narrow_in_resp_o       (narrow_slv_rsp[i])
+    );
+  end
 
-  task cycle_start;
-    #TestTime;
-  endtask
+  //====================================================================
+  // Monitors
+  //====================================================================
+  tb_wide_data_t rx_q[$];
+  int rx_cnt;
+  int tx_cnt;
+  int finish_cnt[TbNumClusters];
+  int errors = 0;
 
-  task cycle_end;
-    @(posedge clk);
-  endtask
-
-  task automatic rand_wait(input int unsigned min, max);
-    int unsigned rand_success, cycles;
-    rand_success = std::randomize(
-        cycles
-    ) with {
-      cycles >= min;
-      cycles <= max;
-    };
-    assert (rand_success)
-    else $error("Failed to randomize wait cycles!");
-    repeat (cycles) @(posedge clk);
-  endtask
-
-
-  task automatic reset_xdma();
-    xdma_to_remote_cfg = '0;
-    xdma_to_remote_cfg_valid = '0;
-    xdma_to_remote_data = '0;
-    xdma_to_remote_data_valid = '0;
-    xdma_to_remote_data_accompany_cfg = '0;
-    xdma_from_remote_data_accompany_cfg = '0;
-    xdma_from_remote_cfg_ready = '1;
-    xdma_from_remote_data_ready = '1;
-  endtask
-
-
-
-
-  task automatic read_send_cfg;
-    $display("Start Send CFG");
-    xdma_to_remote_cfg[0].dma_id <= #ApplTime 8'd88;
-    xdma_to_remote_cfg[0].dma_type <= #ApplTime '0;
-    xdma_to_remote_cfg[0].reader_addr <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
-    xdma_to_remote_cfg[0].writer_addr.write_addr_0 <= #ApplTime ClusterBaseAddr;
-    xdma_to_remote_cfg[0].writer_addr.write_addr_1 <= #ApplTime '0;
-    xdma_to_remote_cfg[0].writer_addr.write_addr_2 <= #ApplTime '0;
-    xdma_to_remote_cfg[0].writer_addr.write_addr_3 <= #ApplTime '0;
-    xdma_to_remote_cfg[0].spatial_stride <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_0 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_1 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_2 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_3 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_4 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_5 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_0 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_1 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_2 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_3 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_4 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_5 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].enable_channel <= #ApplTime 1;
-    xdma_to_remote_cfg[0].enable_byte <= #ApplTime 1;
-    xdma_to_remote_cfg_valid[0] <= #ApplTime 1;
-    cycle_start();
-    while (xdma_to_remote_cfg_ready[0] != 1) begin
-      cycle_end();
-      cycle_start();
-    end
-    cycle_end();
-    xdma_to_remote_cfg[0] <= #ApplTime '0;
-    xdma_to_remote_cfg_valid[0] <= #ApplTime 0;
-    xdma_from_remote_data_accompany_cfg[0].dma_id <= #ApplTime 8'd88;
-    xdma_from_remote_data_accompany_cfg[0].dma_type <= #ApplTime '0;
-    xdma_from_remote_data_accompany_cfg[0].src_addr <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
-    xdma_from_remote_data_accompany_cfg[0].dst_addr <= #ApplTime ClusterBaseAddr;
-    xdma_from_remote_data_accompany_cfg[0].dma_length <= #ApplTime 100;
-    xdma_from_remote_data_accompany_cfg[0].ready_to_transfer <= #ApplTime 1;
-    xdma_from_remote_data_accompany_cfg[0].is_first_cw <= #ApplTime 0;
-    xdma_from_remote_data_accompany_cfg[0].is_last_cw <= #ApplTime 0;
-    $display("End Send CFG");
-  endtask
-
-  task automatic read_send_data;
-
-    tb_wide_data_t local_mem[$];
-    int dma_length = 100;
-    for (int i = 1; i <= dma_length; i++) begin
-      local_mem.push_back(1024 + i);
-    end
-    $display("Start Send Data");
-    xdma_to_remote_data_accompany_cfg[1].dma_id <= #ApplTime 8'd88;
-    xdma_to_remote_data_accompany_cfg[1].dma_length <= #ApplTime 'd100;
-    xdma_to_remote_data_accompany_cfg[1].dma_type <= #ApplTime '0;
-    xdma_to_remote_data_accompany_cfg[1].src_addr <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
-    xdma_to_remote_data_accompany_cfg[1].dst_addr <= #ApplTime ClusterBaseAddr;
-    xdma_to_remote_data_accompany_cfg[1].ready_to_transfer <= #ApplTime 1'b1;
-    xdma_to_remote_data_accompany_cfg[1].is_first_cw <= #ApplTime 1'b0;
-    xdma_to_remote_data_accompany_cfg[1].is_last_cw <= #ApplTime 1'b0;
-    // standard axi handshake for
-    for (int i = 1; i <= dma_length; i++) begin
-      rand_wait(0, 5);
-      $display("Send Data idx = %d", i);
-      xdma_to_remote_data[1] = local_mem.pop_front();
-      xdma_to_remote_data_valid[1] = 1'b1;
-      cycle_start();
-      while (xdma_to_remote_data_ready[1] != 1) begin
-        cycle_end();
-        cycle_start();
+  always @(posedge clk) begin
+    if (rst_n) begin
+      if (from_remote_data_valid[1] && from_remote_data_ready[1]) begin
+        rx_q.push_back(from_remote_data[1]);
+        rx_cnt++;
       end
-      cycle_end();
-      xdma_to_remote_data_valid[1] = 1'b0;
+      if (to_remote_data_valid[0] && to_remote_data_ready[0]) tx_cnt++;
+      for (int i = 0; i < TbNumClusters; i++) if (xdma_finish[i]) finish_cnt[i]++;
     end
-
-  endtask
-
-
-
-  task automatic write_send_cfg;
-    xdma_to_remote_cfg[0].dma_id <= #ApplTime 8'd88;
-    xdma_to_remote_cfg[0].dma_type <= #ApplTime 1'b1;
-    xdma_to_remote_cfg[0].reader_addr <= #ApplTime ClusterBaseAddr;
-    xdma_to_remote_cfg[0].writer_addr.write_addr_0 <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
-    xdma_to_remote_cfg[0].writer_addr.write_addr_1 <= #ApplTime '0;
-    xdma_to_remote_cfg[0].writer_addr.write_addr_2 <= #ApplTime '0;
-    xdma_to_remote_cfg[0].writer_addr.write_addr_3 <= #ApplTime '0;
-    xdma_to_remote_cfg[0].spatial_stride <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_0 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_1 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_2 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_3 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_4 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_bound.temporal_bound_5 <= #ApplTime 16;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_0 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_1 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_2 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_3 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_4 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].temporal_stride.temporal_stride_5 <= #ApplTime 8;
-    xdma_to_remote_cfg[0].enable_channel <= #ApplTime 1;
-    xdma_to_remote_cfg[0].enable_byte <= #ApplTime 1;
-    xdma_to_remote_cfg_valid[0] <= #ApplTime 1;
-    cycle_start();
-    while (xdma_to_remote_cfg_ready[0] != 1) begin
-      cycle_end();
-      cycle_start();
-    end
-    cycle_end();
-    xdma_to_remote_cfg[0] <= #ApplTime '0;
-    xdma_to_remote_cfg_valid[0] <= #ApplTime 0;
-  endtask
-
-  task automatic write_send_data;
-    tb_wide_data_t local_mem[$];
-    int dma_length = 100;
-    for (int i = 1; i <= dma_length; i++) begin
-      local_mem.push_back(1024 + i);
-    end
-
-    xdma_from_remote_data_accompany_cfg[1].dma_id <= #ApplTime 8'd88;
-    xdma_from_remote_data_accompany_cfg[1].dma_length <= #ApplTime 'd100;
-    xdma_from_remote_data_accompany_cfg[1].dma_type <= #ApplTime 1'b1;
-    xdma_from_remote_data_accompany_cfg[1].src_addr <= #ApplTime ClusterBaseAddr;
-    xdma_from_remote_data_accompany_cfg[1].dst_addr <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
-    xdma_from_remote_data_accompany_cfg[1].ready_to_transfer <= #ApplTime 1'b1;
-    xdma_from_remote_data_accompany_cfg[1].is_first_cw <= #ApplTime 1'b0;
-    xdma_from_remote_data_accompany_cfg[1].is_last_cw <= #ApplTime 1'b1;
-
-
-    xdma_to_remote_data_accompany_cfg[0].dma_id <= #ApplTime 8'd88;
-    xdma_to_remote_data_accompany_cfg[0].dma_length <= #ApplTime 'd100;
-    xdma_to_remote_data_accompany_cfg[0].dma_type <= #ApplTime 1'b1;
-    xdma_to_remote_data_accompany_cfg[0].src_addr <= #ApplTime ClusterBaseAddr;
-    xdma_to_remote_data_accompany_cfg[0].dst_addr <= #ApplTime ClusterBaseAddr + 1 * ClusterAddressSpace;
-    xdma_to_remote_data_accompany_cfg[0].ready_to_transfer <= #ApplTime 1'b1;
-    xdma_to_remote_data_accompany_cfg[0].is_first_cw <= #ApplTime 1'b1;
-    xdma_to_remote_data_accompany_cfg[0].is_last_cw <= #ApplTime 1'b0;
-    // standard axi handshake for
-    for (int i = 1; i <= dma_length; i++) begin
-      $display("Send Data idx = %d", i);
-      xdma_to_remote_data[0] = local_mem.pop_front();
-      xdma_to_remote_data_valid[0] = 1'b1;
-      cycle_start();
-      while (xdma_to_remote_data_ready[0] != 1) begin
-        cycle_end();
-        cycle_start();
-      end
-      cycle_end();
-      xdma_to_remote_data_valid[0] = 1'b0;
-      rand_wait(0, 5);
-    end
-  endtask
-
-
-
-
-
+  end
 
   initial begin
-    reset_xdma();
-    rand_wait(20, 20);
+    #SimTimeout;
+    $fatal(1, "[TB] global timeout -- the transfer never completed");
+  end
 
-    write_send_cfg();
-    wait (xdma_from_remote_cfg_valid[1]);
-    rand_wait(1, 5);
-    write_send_data();
+  //====================================================================
+  // Stimulus
+  //====================================================================
+  tb_xdma_inter_cluster_cfg_t last_cfg_sent;
 
-
-
-    // read_send_cfg();
-    // wait(xdma_from_remote_cfg_valid[1]);
-    // rand_wait(1,5);
-    // read_send_data();
-    // wait(xdma_finish[0]);
-    // xdma_from_remote_data_accompany_cfg[0].ready_to_transfer <= #ApplTime 0;
-    // $display("Send Finish");
-
-    repeat (10) begin
-      cycle_end();
-      cycle_start();
+  task automatic check_int(input int actual, input int expected, input string what);
+    if (actual != expected) begin
+      errors++;
+      $error("%s: expected %0d, got %0d", what, expected, actual);
     end
+  endtask
+
+  function automatic tb_wide_data_t beat(input int unsigned i);
+    tb_wide_data_t d;
+    d          = '0;
+    d[63:0]    = 64'hC0FF_EE00_0000_0000 + i;
+    d[511:448] = 64'hFEED_FACE_0000_0000 + i;
+    return d;
+  endfunction
+
+  task automatic write_send_cfg(input tb_id_t id);
+    tb_xdma_inter_cluster_cfg_t cfg;
+    cfg                                     = '0;
+    cfg.dma_type                            = 1'b1;  // write
+    cfg.frame_length                        = 4'd1;
+    cfg.dma_id                              = id;
+    cfg.reader_addr                         = cluster_base(0);
+    cfg.writer_addr                         = cluster_base(1);
+    cfg.first_frame_remaining_payload[31:0] = 32'hCAFE_F00D;
+    last_cfg_sent                           = cfg;
+
+    to_remote_cfg[0]       <= cfg;
+    to_remote_cfg_valid[0] <= 1'b1;
+    @(negedge clk);
+    while (!to_remote_cfg_ready[0]) @(negedge clk);
+    @(posedge clk);
+    to_remote_cfg_valid[0] <= 1'b0;
+    to_remote_cfg[0]       <= '0;
+  endtask
+
+  task automatic write_send_data(input tb_id_t id, input int unsigned len);
+    // Receiver window: node 1 is the last (and only) hop of this write.
+    from_remote_acfg[1].dma_id            <= id;
+    from_remote_acfg[1].dma_type          <= 1'b1;
+    from_remote_acfg[1].src_addr          <= cluster_base(0);
+    from_remote_acfg[1].dst_addr          <= cluster_base(1);
+    from_remote_acfg[1].dma_length        <= tb_len_t'(len);
+    from_remote_acfg[1].ready_to_transfer <= 1'b1;
+    from_remote_acfg[1].is_first_cw       <= 1'b0;
+    from_remote_acfg[1].is_last_cw        <= 1'b1;
+
+    // Sender window: node 0 originates.
+    to_remote_acfg[0].dma_id            <= id;
+    to_remote_acfg[0].dma_type          <= 1'b1;
+    to_remote_acfg[0].src_addr          <= cluster_base(0);
+    to_remote_acfg[0].dst_addr          <= cluster_base(1);
+    to_remote_acfg[0].dma_length        <= tb_len_t'(len);
+    to_remote_acfg[0].ready_to_transfer <= 1'b1;
+    to_remote_acfg[0].is_first_cw       <= 1'b1;
+    to_remote_acfg[0].is_last_cw        <= 1'b0;
+    @(posedge clk);
+
+    for (int unsigned i = 0; i < len; i++) begin
+      head_data  <= beat(i);
+      head_valid <= 1'b1;
+      @(negedge clk);
+      while (!to_remote_data_ready[0]) @(negedge clk);
+      @(posedge clk);
+    end
+    head_valid <= 1'b0;
+
+    // The receiver closing its window is what releases the finish back to node 0.
+    wait (rx_cnt == len);
+    @(posedge clk);
+    from_remote_acfg[1].ready_to_transfer <= 1'b0;
+    to_remote_acfg[0].ready_to_transfer   <= 1'b0;
+  endtask
+
+  task automatic run_write(input tb_id_t id, input int unsigned len);
+    $display("[TB] remote write: dma_id=%0d, dma_length=%0d", id, len);
+
+    write_send_cfg(id);
+    @(negedge clk);
+    while (!from_remote_cfg_valid[1]) @(negedge clk);
+    if (from_remote_cfg[1] !== tb_wide_data_t'(last_cfg_sent)) begin
+      errors++;
+      $error("node 1 cfg frame mismatch\n  expected %h\n  got      %h",
+             tb_wide_data_t'(last_cfg_sent), from_remote_cfg[1]);
+    end
+    @(posedge clk);
+    repeat (5) @(posedge clk);
+
+    write_send_data(id, len);
+
+    wait (finish_cnt[0] == 1);
+    repeat (20) @(posedge clk);
+
+    check_int(tx_cnt, len, "beats sent by node 0");
+    check_int(rx_cnt, len, "beats received by node 1");
+    check_int(finish_cnt[0], 1, "node 0 reports exactly one xdma_finish_o");
+    check_int(finish_cnt[1], 0, "node 1 reports no local xdma_finish_o");
+
+    for (int unsigned i = 0; i < len; i++) begin
+      if (rx_q[i] !== beat(i)) begin
+        errors++;
+        $error("payload mismatch at beat %0d\n  expected %h\n  got      %h", i, beat(i), rx_q[i]);
+      end
+    end
+
+    to_remote_acfg   <= '0;
+    from_remote_acfg <= '0;
+    repeat (20) @(posedge clk);
+    rx_q.delete();
+    rx_cnt = 0;
+    tx_cnt = 0;
+    for (int i = 0; i < TbNumClusters; i++) finish_cnt[i] = 0;
+  endtask
+
+  initial begin
+    to_remote_cfg       = '0;
+    to_remote_cfg_valid = '0;
+    to_remote_acfg      = '0;
+    from_remote_acfg    = '0;
+    head_data           = '0;
+    head_valid          = 1'b0;
+    rx_cnt              = 0;
+    tx_cnt              = 0;
+    for (int i = 0; i < TbNumClusters; i++) finish_cnt[i] = 0;
+
+    @(posedge rst_n);
+    repeat (10) @(posedge clk);
+
+    // Single beat. The reader drops its busy flag before the grant round trip completes,
+    // so this is the case that needs the sticky write-readiness latch.
+    run_write(4'd7, 1);
+    // 100 beats crosses the 64-beat page, so the burst reshaper splits it and the second
+    // run also re-exercises the grant and finish paths back to back.
+    run_write(4'd8, 100);
+
+    if (errors != 0) $fatal(1, "[TB] tb_xdma_axi_adapter_top FAILED with %0d error(s)", errors);
+    $display("[PASS] tb_xdma_axi_adapter_top");
     $finish;
   end
 

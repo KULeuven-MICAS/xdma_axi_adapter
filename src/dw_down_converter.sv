@@ -69,6 +69,8 @@ module dw_down_converter #(
         // (duplicated beats) and truncates the burst (no final beat => no w.last downstream),
         // which strands an AXI write mid-burst and can deadlock the SoC narrow->wide bridge.
         BUSY: if (ready_i && (counter_q == DOWN_RATIO - 1)) next_state = IDLE;
+        // Two states in a 2-bit encoding; keep the unused ones from being absorbing.
+        default: next_state = IDLE;
         endcase
     end
 
@@ -94,6 +96,13 @@ module dw_down_converter #(
             ready_o = ready_i && (counter_q == DOWN_RATIO - 1);
             counter_en = ready_i;
             counter_clr = ready_i && (counter_q == DOWN_RATIO - 1);
+        end
+        default: begin
+            data_o = '0;
+            valid_o = 1'b0;
+            ready_o = 1'b0;
+            counter_en = 1'b0;
+            counter_clr = 1'b1;
         end
         endcase
     end

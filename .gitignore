@@ -27,3 +27,6 @@ gmon.out
 
 target/streams/
 target/scala*
+
+build/
+*.log

@@ -65,6 +65,10 @@ module xdma_grant_manager #(
       SEND_GRANT_TO_PREV_HOP: if (grant_happening) next_state = WAIT_FINISH;
       // Wait the current req is finish
       WAIT_FINISH: if (grant_valid == 1'b0) next_state = IDLE;
+      // 5 states in a 3-bit encoding leaves 3 unused. Without this arm the
+      // `next_state = cur_state` default makes any illegal encoding absorbing,
+      // so a single upset kills every future grant until reset.
+      default: next_state = IDLE;
     endcase
   end
 
@@ -75,8 +79,19 @@ module xdma_grant_manager #(
       IDLE: to_remote_grant_valid_o = 1'b0;
       WRITE_LAST: to_remote_grant_valid_o = 1'b0;
       WRITE_MIDDLE: to_remote_grant_valid_o = 1'b0;
-      SEND_GRANT_TO_PREV_HOP: to_remote_grant_valid_o = grant_valid;
+      // VALID must not depend on `grant_valid` here. `grant_valid` tracks
+      // `from_remote_data_accompany_cfg_i.ready_to_transfer`, a live external level
+      // (the receiving datapath's writerBusy). Qualifying VALID with it lets VALID
+      // retract after the narrow req_manager has already arbitrated this input:
+      // AXI-stream VALID stability is violated, the grant is lost, this FSM never
+      // leaves SEND_GRANT_TO_PREV_HOP (it only exits on the handshake), and the
+      // req_manager -- which exits BUSY only on a beat count it can now never reach --
+      // wedges the whole narrow port, cfg and finish included. Once the FSM has
+      // committed to sending, hold VALID until the sink takes it. The payload is
+      // frozen for the same window in xdma_axi_adapter_top.
+      SEND_GRANT_TO_PREV_HOP: to_remote_grant_valid_o = 1'b1;
       WAIT_FINISH: to_remote_grant_valid_o = 1'b0;
+      default: to_remote_grant_valid_o = 1'b0;
     endcase
   end
 endmodule

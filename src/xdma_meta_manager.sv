@@ -74,6 +74,8 @@ module xdma_meta_manager #(
       IDLE:   if (write_req_busy_i) next_state = BUSY;
       BUSY:   if (write_req_done_o) next_state = FINISH;
       FINISH: next_state = IDLE;
+      // Three states in a 2-bit encoding; keep the unused one from being absorbing.
+      default: next_state = IDLE;
     endcase
   end
 
@@ -108,6 +110,9 @@ module xdma_meta_manager #(
         cur_dma_id_o = write_req_meta_i.dma_id;
       end
       FINISH: begin
+        counter_clear = 1'b1;
+      end
+      default: begin
         counter_clear = 1'b1;
       end
     endcase
