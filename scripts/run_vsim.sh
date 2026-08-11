@@ -27,6 +27,12 @@ exec_test() {
         find_first_one_idx)
         call_vsim tb_$1
         ;;
+        xdma_grant_hold)
+        # vsim-8386 rejects assigning a raw vector to an enum variable. This testbench
+        # deliberately forces an out-of-range encoding into the FSM's state register to
+        # prove the illegal-state arm recovers, so the check has to be off for it.
+        call_vsim tb_$1 -t 1ns -coverage -voptargs="+acc +cover=bcesfx" -suppress 8386
+        ;;
     *)
         call_vsim tb_$1 -t 1ns -coverage -voptargs="+acc +cover=bcesfx"
         ;;

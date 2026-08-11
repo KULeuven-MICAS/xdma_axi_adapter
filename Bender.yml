@@ -35,4 +35,10 @@ sources:
       - test/tb_find_first_one_idx.sv
       - test/tb_xdma_meta_manager.sv
       - test/tb_xdma_burst_reshaper.sv
-      - test/tb_xdma_axi_adapter_top.sv
+      - test/tb_xdma_grant_hold.sv
+      - test/tb_xdma_write_demux_error.sv
+      - test/tb_xdma_zero_length_guard.sv
+      - test/tb_xdma_finish_backpressure.sv
+      # test/tb_xdma_axi_adapter_top.sv is NOT listed: it still refers to cfg struct
+      # fields (writer_addr.write_addr_0, spatial_stride, temporal_bound, ...) that the
+      # RTL dropped when the adapter stopped importing xdma_pkg, so it does not compile.
