@@ -118,6 +118,8 @@ module xdma_burst_reshaper #(
       IDLE:   if (write_req_desc_valid_i) next_state = BUSY;
       BUSY:   if (finish) next_state = FINISH;
       FINISH: if (write_req_done_i) next_state = IDLE;
+      // Three states in a 2-bit encoding; keep the unused one from being absorbing.
+      default: next_state = IDLE;
     endcase
   end
 
@@ -148,6 +150,12 @@ module xdma_burst_reshaper #(
         counter_load = 1'b0;
         write_req_desc_valid_o = 1'b0;
       end
+      default: begin
+        counter_en = 1'b0;
+        counter_clear = 1'b1;
+        counter_load = 1'b0;
+        write_req_desc_valid_o = 1'b0;
+      end
     endcase
   end
 
@@ -156,7 +164,17 @@ module xdma_burst_reshaper #(
   // Gates the AW/W write-data path; see `WriteDataIdx` declaration above for
   // the wide vs narrow contract.
   assign is_write_data =  (write_req_idx_i==WriteDataIdx) && (write_req_desc_i.dma_type);
-  assign num_beats = (lens_counter_q >= MaxNumBeats) ? MaxNumBeats : lens_counter_q;
+  // The `lens_counter_q == 0` arm exists only to bound the damage of a malformed
+  // zero-length descriptor. `num_beats` is 8 bit and `len = num_beats - 1`, so a zero
+  // count would underflow to `awlen = 255` and open a 256-beat burst on the shared bus
+  // that nothing will ever feed -- far worse than the single stray beat this emits.
+  // A zero length is not reachable from the frontend (`readyToTransfer` follows
+  // reader/writer busy, which never asserts for a zero-length transfer); the assertion
+  // below catches it if that ever changes. Note the deliberate truncation in the middle
+  // arm: the narrow instance has MaxNumBeats = 256, which wraps to 8'd0 and pairs with
+  // `awlen = 255` to mean exactly 256 beats.
+  assign num_beats = (lens_counter_q == 0)          ? 8'd1 :
+                     (lens_counter_q >= MaxNumBeats) ? MaxNumBeats : lens_counter_q;
   always_comb begin : proc_pack_write_req
     //-----------------------
     // create the AW request
@@ -206,5 +224,14 @@ module xdma_burst_reshaper #(
     write_req_w_desc_o.is_single = (num_beats == 8'd1);
     write_req_w_desc_o.is_write_data = is_write_data;
   end
+
+`ifndef SYNTHESIS
+  // A zero-length descriptor cannot be served: the burst it would open has no beats, and
+  // xdma_meta_manager compares against `dma_length - 1`, which underflows so `done` never
+  // fires and the port hangs. Catch it where it originates rather than downstream.
+  assert property (@(posedge clk_i) disable iff (!rst_ni)
+      write_req_desc_valid_i |-> (write_req_desc_i.dma_length != 0))
+    else $error("xdma_burst_reshaper: zero-length write descriptor accepted");
+`endif
 
 endmodule
