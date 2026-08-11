@@ -50,9 +50,9 @@ module dw_up_converter #(
     assign word_idx = count_q;
 
     // Merge the input beat into the accumulating word at the position named by the beat
-    // counter. The merge is qualified by `valid_i` alone, so `buffer_d` -- which drives
-    // `data_o` (see below) -- always includes the beat currently on the input. The
-    // register commits only on a handshake (`buffer_we = ready_o`).
+    // counter. The merge is qualified by `valid_i` alone, not by the handshake, so
+    // `buffer_d` -- which drives `data_o`, see below -- always includes the beat currently
+    // on the input. The register commits only on a handshake (`buffer_we = ready_o`).
     always_comb begin
         buffer_d  = buffer_q;
         buffer_we = 1'b0;
@@ -77,11 +77,10 @@ module dw_up_converter #(
         end
     end
 
-    // `data_o` is the combinational merge, so the word handed to the sink includes the
-    // LAST input beat: `valid_o` rises in the same cycle that beat sits on `data_i`, and
-    // the register only takes it at the following clock edge. `buffer_d` holds steady for
-    // as long as `valid_i` stays asserted, so the payload does not move while valid waits
-    // for ready.
+    // Drive the sink from the combinational merge, not from `buffer_q`, so the word it sees
+    // includes the LAST input beat: `valid_o` rises in the same cycle that beat sits on
+    // `data_i`, and the register only takes it at the following edge. `buffer_d` holds steady
+    // for as long as `valid_i` does, so the payload cannot move while valid waits for ready.
     assign data_o = buffer_d;
 
     // Counter control logic

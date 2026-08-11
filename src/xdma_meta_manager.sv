@@ -74,7 +74,7 @@ module xdma_meta_manager #(
       IDLE:   if (write_req_busy_i) next_state = BUSY;
       BUSY:   if (write_req_done_o) next_state = FINISH;
       FINISH: next_state = IDLE;
-      // Three states in a 2-bit encoding; keep the unused one from being absorbing.
+      // Three states in a 2-bit encoding: this arm keeps the unused one from trapping.
       default: next_state = IDLE;
     endcase
   end

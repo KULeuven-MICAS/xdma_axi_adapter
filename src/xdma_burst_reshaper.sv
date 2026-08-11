@@ -33,12 +33,11 @@ module xdma_burst_reshaper #(
     //     logic                               is_write_data;
     // } xdma_req_w_desc_t;
     parameter type xdma_req_w_desc_t = logic,
-    // The xdma_req_idx_t value that gates the AW/W-channel write-data path: a
-    // request only counts as write data, and is only grant-gated, when its index
-    // matches. The wide adapter passes `ToRemoteData`, the sole wide entry, so
-    // the gate is always active for wide writes. The narrow adapter takes the
-    // default `'0`, which in the narrow encoding is `ToRemoteFinish`; that is
-    // harmless because the narrow backend ties `write_req_grant_i` high.
+    // The xdma_req_idx_t value that gates the AW/W-channel write-data path: a request
+    // counts as write data, and is grant-gated, only when its index matches. The wide
+    // adapter passes `ToRemoteData`, its sole entry, so the gate is always active for wide
+    // writes. The narrow adapter takes the default `'0`, which its encoding maps to
+    // `ToRemoteFinish` -- harmless, since the narrow backend ties `write_req_grant_i` high.
     parameter xdma_req_idx_t WriteDataIdx = '0,
     // Dependent Parameters
     parameter int unsigned DataWidth = $bits(data_t),  //512
@@ -118,7 +117,7 @@ module xdma_burst_reshaper #(
       IDLE:   if (write_req_desc_valid_i) next_state = BUSY;
       BUSY:   if (finish) next_state = FINISH;
       FINISH: if (write_req_done_i) next_state = IDLE;
-      // Three states in a 2-bit encoding; keep the unused one from being absorbing.
+      // Three states in a 2-bit encoding: this arm keeps the unused one from trapping.
       default: next_state = IDLE;
     endcase
   end
@@ -164,15 +163,15 @@ module xdma_burst_reshaper #(
   // Gates the AW/W write-data path; see `WriteDataIdx` declaration above for
   // the wide vs narrow contract.
   assign is_write_data =  (write_req_idx_i==WriteDataIdx) && (write_req_desc_i.dma_type);
-  // The `lens_counter_q == 0` arm exists only to bound the damage of a malformed
-  // zero-length descriptor. `num_beats` is 8 bit and `len = num_beats - 1`, so a zero
-  // count would underflow to `awlen = 255` and open a 256-beat burst on the shared bus
-  // that nothing will ever feed -- far worse than the single stray beat this emits.
-  // A zero length is not reachable from the frontend (`readyToTransfer` follows
-  // reader/writer busy, which never asserts for a zero-length transfer); the assertion
-  // below catches it if that ever changes. Note the deliberate truncation in the middle
-  // arm: the narrow instance has MaxNumBeats = 256, which wraps to 8'd0 and pairs with
-  // `awlen = 255` to mean exactly 256 beats.
+  // The `lens_counter_q == 0` arm bounds the damage of a malformed zero-length descriptor.
+  // `num_beats` is 8 bit and `len = num_beats - 1`, so a zero count underflows to
+  // `awlen = 255` and opens a 256-beat burst on the shared bus that nothing will ever feed --
+  // far worse than the single stray beat this emits instead. The frontend cannot produce a
+  // zero length (`readyToTransfer` follows reader/writer busy, which never asserts for a
+  // zero-length transfer); the assertion at the end of this module catches it if that changes.
+  //
+  // The truncation in the middle arm is deliberate: the narrow instance has
+  // MaxNumBeats = 256, which wraps to 8'd0 and pairs with `awlen = 255` to mean 256 beats.
   assign num_beats = (lens_counter_q == 0)          ? 8'd1 :
                      (lens_counter_q >= MaxNumBeats) ? MaxNumBeats : lens_counter_q;
   always_comb begin : proc_pack_write_req
@@ -183,38 +182,35 @@ module xdma_burst_reshaper #(
     write_req_aw_desc_o.addr = write_req_desc_i.remote_addr;
     write_req_aw_desc_o.len = num_beats - 1;  // the minus 1 here is from Length = axLen + 1
     // AWSIZE is log2(bytes-per-beat) and must equal this instance's strobe width, or the
-    // burst claims a beat wider than the bus it rides -- an AXI protocol violation that an
-    // FPGA interconnect, an axi_protocol_checker or a synthesis DRC will flag. Derived from
-    // StrbWidth so each instance is right by construction: 3'b110 wide, 3'b011 narrow.
+    // burst claims a beat wider than the bus it rides -- an AXI protocol violation an FPGA
+    // interconnect, an axi_protocol_checker or a synthesis DRC will flag. Deriving it from
+    // StrbWidth makes each instance right by construction: 3'b110 wide, 3'b011 narrow.
     write_req_aw_desc_o.size = 3'($clog2(StrbWidth));  // per-instance: 6 wide, 3 narrow
     write_req_aw_desc_o.burst = 2'b01;  // BURST TYPE: INCR
-    // AxCACHE = 0010: bit 1 is `axi_pkg::CACHE_MODIFIABLE`, telling the interconnect it may
-    // reshape this burst. The other three bits stay 0 (non-bufferable, non-cacheable),
-    // which is what an MMIO-style target wants. 
+    // AxCACHE = 0010: bit 1 is `axi_pkg::CACHE_MODIFIABLE`, which permits the interconnect to
+    // reshape this burst. The other three stay 0 -- non-bufferable, non-cacheable -- as an
+    // MMIO-style target wants.
     //
-    // WHY MODIFIABLE. `axi_dw_upsizer` packs narrow beats into wide ones ONLY when
-    // `modifiable(aw.cache)` holds; otherwise it takes its passthrough branch and forwards
-    // the original `len`/`size` unchanged. The cross-cluster cfg frame is 512 bit but
-    // leaves the NARROW port as 8 x 64 bit beats (`to_remote_cfg_desc.dma_length =
-    // frame_length << WIDE_NARROW_DW_BITS` in xdma_axi_adapter_top). A cross-die cfg
-    // carries a foreign chip id, matches no rule in the SoC narrow crossbar, and therefore
-    // default-routes onto the narrow->wide bridge (`axi_dw_converter` 64->512) on its way
-    // to the D2D link. With AxCACHE = 0 that bridge spends 8 x 512 bit beats carrying 8
-    // useful bytes each; with the bit set it emits ONE full 64 B beat. Same bytes, 8x fewer
-    // beats across the wide crossbar and the die boundary.
+    // MODIFIABLE buys a width conversion. `axi_dw_upsizer` packs narrow beats into wide ones
+    // only when `modifiable(aw.cache)` holds, and otherwise forwards `len`/`size` unchanged.
+    // A cross-cluster cfg frame is 512 bit but leaves the NARROW port as 8 x 64 bit beats
+    // (`to_remote_cfg_desc.dma_length = frame_length << WIDE_NARROW_DW_BITS` in
+    // xdma_axi_adapter_top); carrying a foreign chip id, it matches no rule in the SoC narrow
+    // crossbar and default-routes onto the narrow->wide bridge (`axi_dw_converter` 64->512) to
+    // reach the D2D link. Clear, the bridge spends 8 x 512 bit beats on 8 useful bytes each.
+    // Set, it emits ONE full 64 B beat: same bytes, 8x fewer beats across the wide crossbar
+    // and the die boundary.
     //
-    // WHY IT IS SAFE. The packing is undone symmetrically at the far end: `axi_dw_downsizer`
-    // does NOT gate on `modifiable` -- it splits any INCR whose `size` exceeds the master
-    // width -- so the 64 B beat becomes 8 x 8 B beats at the original addresses, all inside
-    // the same 4 KiB cfg MMIO window, and the receiving `xdma_write_demux` /
-    // `i_cfg_dw_up_converter` reassemble exactly what they see today. The cfg base is 4 KiB
-    // aligned (MMIOCFGOffset), so a frame packs into whole wide beats with no partial head
-    // or tail.
+    // The packing is undone symmetrically at the far end. `axi_dw_downsizer` does not gate on
+    // `modifiable` -- it splits any INCR whose `size` exceeds the master width -- so the 64 B
+    // beat becomes 8 x 8 B beats at the original addresses, all inside the same 4 KiB cfg MMIO
+    // window, and the receiving `xdma_write_demux` / `i_cfg_dw_up_converter` reassemble it
+    // unchanged. The cfg base is 4 KiB aligned (MMIOCFGOffset), so a frame packs into whole
+    // wide beats with no partial head or tail.
     //
-    // WHAT IS UNAFFECTED. `to_remote_grant` / `to_remote_finish` are single-beat
-    // (`dma_length = 1`, so `len == 0`) and a width converter never reshapes a single-beat
-    // burst. The wide `ToRemoteData` path is already at full width, so no converter packs
-    // it either; the bit is inert there.
+    // The bit is inert elsewhere: `to_remote_grant` / `to_remote_finish` are single-beat
+    // (`dma_length = 1`, so `len == 0`) and no width converter reshapes a single-beat burst,
+    // and the wide `ToRemoteData` path already runs at full width.
     write_req_aw_desc_o.cache = 4'b0010;
     write_req_aw_desc_o.is_write_data = is_write_data;
     //-----------------------
@@ -226,8 +222,8 @@ module xdma_burst_reshaper #(
   end
 
 `ifndef SYNTHESIS
-  // A zero-length descriptor cannot be served: the burst it would open has no beats, and
-  // xdma_meta_manager compares against `dma_length - 1`, which underflows so `done` never
+  // A zero-length descriptor cannot be served: the burst it opens has no beats, and
+  // xdma_meta_manager compares against `dma_length - 1`, which underflows, so `done` never
   // fires and the port hangs. Catch it where it originates rather than downstream.
   assert property (@(posedge clk_i) disable iff (!rst_ni)
       write_req_desc_valid_i |-> (write_req_desc_i.dma_length != 0))
