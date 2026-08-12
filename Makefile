@@ -14,7 +14,8 @@ TBS           ?= find_first_one_idx \
                  xdma_write_demux_error \
                  xdma_zero_length_guard \
                  xdma_finish_backpressure \
-                 xdma_axi_adapter_top
+                 xdma_axi_adapter_top \
+                 xdma_chain_write_3node
 
 SIM_TARGETS := $(addsuffix .log,$(addprefix sim-,$(TBS)))
 
