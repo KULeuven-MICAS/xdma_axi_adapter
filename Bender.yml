@@ -42,3 +42,5 @@ sources:
       - test/xdma_chain_3node_body.sv
       - test/tb_xdma_chain_write_3node.sv
       - test/tb_xdma_chain_gather_3node.sv
+      - test/tb_xdma_chain_gather_transient_3node.sv
+      - test/tb_xdma_finish_manager_gather_rearm.sv

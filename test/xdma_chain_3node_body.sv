@@ -44,10 +44,15 @@
 
 module xdma_chain_3node_body #(
     /// 0 = ChainWrite (initiator is the head), 1 = ChainGather (initiator is the tail).
-    parameter bit Gather = 1'b0
+    parameter bit Gather         = 1'b0,
+    /// Replay the middle hop's local-reader transient (see `run_chain`, phase B). Only
+    /// meaningful with `Gather`: a ChainWrite middle has no local reader running.
+    parameter bit ReaderTransient = 1'b0
 ) ();
 
-  localparam string ModeName = Gather ? "ChainGather" : "ChainWrite";
+  localparam string ModeName = Gather ? (ReaderTransient ? "ChainGather (reader transient)"
+                                                          : "ChainGather")
+                                      : "ChainWrite";
   // Which node owns the task, and therefore which one must raise `xdma_finish_o`.
   localparam int unsigned InitiatorNode = Gather ? 2 : 0;
 
@@ -395,6 +400,13 @@ module xdma_chain_3node_body #(
   int head_tx_cnt;
   int mid_tx_cnt;
   int finish_cnt[TbNumClusters];
+  // Grant credits the MIDDLE hop releases. One task reserves one credit and must release
+  // exactly one; a node that also latches itself as the chain's head releases a second,
+  // against a credit nothing reserved. This is the observable half of the head-claim hazard
+  // at full-adapter level -- the other half, a claim taken on a stale id and never
+  // retired, is not expressible in a fixed three-node topology and is covered by
+  // `tb_xdma_finish_manager_gather_rearm`.
+  int mid_credit_cnt;
   int errors = 0;
 
   always @(posedge clk) begin
@@ -406,6 +418,7 @@ module xdma_chain_3node_body #(
       if (to_remote_data_valid[0] && to_remote_data_ready[0]) head_tx_cnt++;
       if (to_remote_data_valid[1] && to_remote_data_ready[1]) mid_tx_cnt++;
       for (int i = 0; i < TbNumClusters; i++) if (xdma_finish[i]) finish_cnt[i]++;
+      if (gen_adapter[1].i_dut.xdma_write_finish) mid_credit_cnt++;
     end
   end
 
@@ -444,6 +457,7 @@ module xdma_chain_3node_body #(
     tail_rx_cnt = 0;
     head_tx_cnt = 0;
     mid_tx_cnt  = 0;
+    mid_credit_cnt = 0;
     for (int i = 0; i < TbNumClusters; i++) finish_cnt[i] = 0;
   endtask
 
@@ -509,8 +523,17 @@ module xdma_chain_3node_body #(
   //====================================================================
   // One end-to-end chained transfer across the three nodes
   //====================================================================
+  // The id the previous `run_chain` used; seeded with the first, since there is no earlier
+  // frame to be stale on the very first task.
+  tb_id_t prev_id;
+  bit     prev_id_valid = 1'b0;
+
   task automatic run_chain(input tb_id_t id, input int unsigned len);
     $display("[TB] %s transfer: dma_id=%0d, dma_length=%0d", ModeName, id, len);
+    if (!prev_id_valid) begin
+      prev_id       = id;
+      prev_id_valid = 1'b1;
+    end
 
     //---- Phase A: cfg walks the chain, hop by hop ----
     // The initiator configures the whole chain, so cfg walks OUTWARD from it: with the
@@ -531,6 +554,30 @@ module xdma_chain_3node_body #(
     repeat (5) @(posedge clk);
 
     //---- Phase B: the chain windows open ----
+    // At a gather node the local reader runs CONCURRENTLY, supplying the junction's own
+    // operand, and it starts BEFORE the gather state machine latches. For those few cycles
+    // the middle's to-remote port reads exactly like a fresh chain head: a locally
+    // originated reader is stamped HEAD, and the chain tag makes the task a write. That is
+    // the shape `xdma_finish_manager`'s FSM2 mistakes for "I am the head of this chain",
+    // and arming it is a one-way door. Replaying it here puts the whole adapter -- grant
+    // credits, req managers and both buses -- behind the guard, which
+    // `tb_xdma_finish_manager_gather_rearm` tests on its own.
+    if (ReaderTransient) begin
+      // The id is the PREVIOUS task's: `RegQueue` keeps driving its popped frame between
+      // tasks, so the transient a node sees while arming task N carries task N-1's id. A
+      // claim taken on it can never be satisfied by task N's finish.
+      to_remote_acfg[1].dma_id            <= prev_id;
+      to_remote_acfg[1].dma_type          <= 1'b1;
+      to_remote_acfg[1].src_addr          <= cluster_base(1);
+      to_remote_acfg[1].dst_addr          <= cluster_base(2);
+      to_remote_acfg[1].dma_length        <= tb_len_t'(len);
+      to_remote_acfg[1].ready_to_transfer <= 1'b1;
+      to_remote_acfg[1].is_first_cw       <= 1'b1;
+      to_remote_acfg[1].is_last_cw        <= 1'b0;
+      to_remote_acfg[1].is_initiator      <= 1'b0;
+      repeat (3) @(posedge clk);
+    end
+
     // Tail: takes delivery and is the last hop -> its grant manager seeds the credit
     // cascade that unblocks the middle and then the head.
     from_remote_acfg[2].dma_id            <= id;
@@ -623,7 +670,10 @@ module xdma_chain_3node_body #(
       end
     end
 
+    check_int(mid_credit_cnt, 1, "grant credits released by the middle hop");
+
     // Settle and clear for the next transfer.
+    prev_id          = id;
     to_remote_acfg   <= '0;
     from_remote_acfg <= '0;
     repeat (20) @(posedge clk);

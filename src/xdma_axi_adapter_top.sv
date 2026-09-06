@@ -78,13 +78,15 @@ module xdma_axi_adapter_top
     // entirely. Pick a few times the worst-case transfer length — the wait
     // states legitimately span a whole in-flight transfer.
     parameter int unsigned StallTimeout                    = 0,
-    // Belt-and-braces guard against the ChainGather spurious-finish hazard:
-    // a middle node whose reader runs concurrently momentarily looks like the
-    // chain head and can raise a bogus `xdma_finish_o`. Default OFF; the
-    // primary fix belongs in Chisel. See the `SpuriousFinishGuard` parameter of
-    // `xdma_finish_manager` for the full rationale and for when enabling it is
-    // the wrong call.
-    parameter bit          SpuriousFinishGuard             = 1'b0,
+    // Stops a node that is only a hop in a chain from claiming to be its head.
+    // At a ChainGather node the local reader runs concurrently and starts
+    // before the gather state machine latches, so the to-remote port reads as a
+    // fresh chain head for a few cycles; arming the finish manager's head FSM on
+    // that is a one-way door that eventually wedges the node. Default ON. See
+    // the `SpuriousFinishGuard` parameter of `xdma_finish_manager` for the full
+    // failure chain, and `tb_xdma_finish_manager_gather_rearm` for each link of
+    // it as a directed test.
+    parameter bit          SpuriousFinishGuard             = 1'b1,
 
     //==========================================================
     // Derived widths — DO NOT OVERRIDE
