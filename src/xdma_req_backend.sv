@@ -207,10 +207,26 @@ module xdma_req_backend #(
   //--------------------------------------
   // the aw and w fifos of both channels are filled
   // together, as request come bundled.
+  // A ToRemoteData write must not be ACCEPTED into the emitter FIFOs until it is allowed to be
+  // EMITTED. The two conditions used to be asymmetric, and that asymmetry stranded descriptors:
+  //
+  //   push: write_req_desc_valid & ~fifo_full                       (unconditional)
+  //   pop : aw_ready & aw_valid, and for is_write_data `aw_valid`
+  //         additionally needs write_req_grant_i && w_valid
+  //
+  // So a to-remote write that was armed but never granted -- or granted but never supplied with
+  // W data -- pushed a descriptor that could not be emitted and that nothing ever removed. The
+  // emitter FIFOs have `flush_i` tied low, so the descriptor SURVIVED THE END OF ITS TRANSFER,
+  // carrying that transfer's destination address. The next to-remote write at this node popped
+  // it and was routed to the PREVIOUS transfer's destination.
+  
+  logic write_req_emittable;
+  assign write_req_emittable = ~xdma_req_aw_desc.is_write_data | write_req_grant_i;
+
   always_comb begin : proc_refill
 
     // Write related channels
-    write_req_desc_ready = ~aw_emitter_full & ~w_emitter_full;
+    write_req_desc_ready = ~aw_emitter_full & ~w_emitter_full & write_req_emittable;
     w_emitter_push       = write_req_desc_valid & write_req_desc_ready;
     aw_emitter_push      = write_req_desc_valid & write_req_desc_ready;
   end
