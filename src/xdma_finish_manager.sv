@@ -107,6 +107,15 @@ module xdma_finish_manager #(
   // combinationally at that point would read whatever happens to be on the port.
   logic  to_remote_is_initiator_q;
   logic  from_remote_is_initiator_q;
+  // The destination of the head transfer, latched with its id. A multicast reuses ONE task
+  // id across its destinations, so the id alone does not identify a leg -- `dst_addr` is what
+  // separates them.
+  addr_t to_remote_dst_addr_q;
+  // A head transfer that has already been REPORTED, kept only for as long as the to-remote
+  // port is still describing it. See `head_window_is_retired`.
+  logic  head_retired_q;
+  id_t   head_retired_id_q;
+  addr_t head_retired_dst_q;
   // FSM1 gets its own copy. FSM1 and FSM3 arm on mutually exclusive values of `dma_type`,
   // but they can be busy at the same time -- a node pulling a remote read while a remote
   // write lands on it is exactly the "receiver is not idle" case -- and each must judge its
@@ -117,6 +126,7 @@ module xdma_finish_manager #(
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       to_remote_dma_id_q        <= '0;
+      to_remote_dst_addr_q      <= '0;
       from_remote_dma_id_q      <= '0;
       from_remote_addr_q        <= '0;
       to_remote_is_initiator_q  <= 1'b0;
@@ -127,6 +137,7 @@ module xdma_finish_manager #(
       if (to_remote_dma_id_en) begin
         to_remote_dma_id_q       <= to_remote_data_accompany_cfg_i.dma_id;
         to_remote_is_initiator_q <= to_remote_data_accompany_cfg_i.is_initiator;
+        to_remote_dst_addr_q     <= to_remote_data_accompany_cfg_i.dst_addr;
       end
       if (from_remote_dma_id_en) begin
         from_remote_dma_id_q       <= from_remote_data_accompany_cfg_i.dma_id;
@@ -265,6 +276,45 @@ module xdma_finish_manager #(
   //   RETRACT evaluated from `WriteFirstBusy` with no `head_claim` term -- the point is to drop
   //           a claim after the fact -- and by then the window has closed and the live port is
   //           showing the next frame or nothing. Use the copy latched when the claim was taken.
+  // A REPORTED head transfer must not be claimed a second time.
+  //
+  // `head_claim` is read combinationally off the to-remote port, and that port does not fall
+  // the instant the finish lands: `ready_to_transfer` follows the sender datapath's reader
+  // busy level, which drops some cycles later. Returning straight to `WriteFirstIdle` after
+  // reporting therefore re-arms on the transfer that just retired, latching its now-dead id
+  // into `to_remote_dma_id_q`. The FSM is then busy on a corpse: the NEXT transfer's finish
+  // does not match, `finish_for_head` stays low, and because the FSM is not idle
+  // `no_finish_consumer` is low too -- so the beat is not even drained. The node loses that
+  // completion with its data delivered and every FSM looking healthy, which is exactly the
+  // "lost rather than late" signature in docs/xdma_multi_issuer_multicast_hang.md.
+  //
+  // It costs a node nothing to be a pure sender -- there the window closes long before the
+  // next one opens. It bites a node that is an issuer AND a destination, because that is
+  // where back-to-back to-remote windows are driven by two different engines.
+  //
+  // The marker is scoped to the stale window: it is dropped as soon as the port stops naming
+  // that transfer, so a later task legitimately reusing the id (they are a mod-16 counter)
+  // still arms.
+  logic head_window_is_retired;
+  assign head_window_is_retired = head_retired_q
+                                & to_remote_data_accompany_cfg_i.ready_to_transfer
+                                & (to_remote_data_accompany_cfg_i.dma_id == head_retired_id_q)
+                                & (to_remote_data_accompany_cfg_i.dst_addr == head_retired_dst_q);
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      head_retired_q     <= 1'b0;
+      head_retired_id_q  <= '0;
+      head_retired_dst_q <= '0;
+    end else if (first_write_finish_valid & first_write_finish_ready) begin
+      head_retired_q     <= 1'b1;
+      head_retired_id_q  <= to_remote_dma_id_q;
+      head_retired_dst_q <= to_remote_dst_addr_q;
+    end else if (head_retired_q & ~head_window_is_retired) begin
+      head_retired_q     <= 1'b0;
+    end
+  end
+
   logic not_receiving_chained_write;      // arm
   logic keep_claim_while_receiving;       // stay armed
   assign not_receiving_chained_write = ~SpuriousFinishGuard
@@ -279,7 +329,7 @@ module xdma_finish_manager #(
     to_remote_dma_id_en = 1'b0;
     case (first_write_current_state)
       WriteFirstIdle: begin
-        if (head_claim && not_receiving_chained_write) begin
+        if (head_claim && not_receiving_chained_write && !head_window_is_retired) begin
           to_remote_dma_id_en = 1'b1;
           first_write_next_state = WriteFirstBusy;
         end
