@@ -21,9 +21,17 @@ pulls this repo's own testbenches into the compile. Testbenches:
 | `tb_xdma_axi_adapter_top` | 2 clusters: a plain remote write, wide **and** narrow bus |
 | `tb_xdma_chain_write_3node` | 3 clusters, ChainWrite: initiator at the head |
 | `tb_xdma_chain_gather_3node` | 3 clusters, ChainGather: initiator at the tail |
+| `tb_xdma_multisource_serial` | 3 clusters, two sources -> one destination, windows disjoint |
+| `tb_xdma_multisource_collision` | the same, with the two receive windows abutting |
+| `tb_xdma_multisource_read_collision` | the same, with a local remote read already in flight |
+| `tb_xdma_mutual_exchange_2node` | 2 clusters writing to each other at once, sender window held |
+| `tb_xdma_mutual_exchange_2node_drop` | the same, sender window dropped once the data is out |
+| `tb_xdma_finish_manager_completion_merge` | `xdma_finish_o` must report one cycle per retired task |
 
 The two chain testbenches share `test/xdma_chain_3node_body.sv` and differ only in one
 parameter — which is the point: the transport is identical and only task ownership moves.
+The three `multisource` testbenches share `test/xdma_multisource_2to1_body.sv` the same way;
+see [Concurrent remote transfers](#concurrent-remote-transfers-into-one-node) below.
 
 Both multi-cluster testbenches wire the **narrow** AXI bus as well as the wide one. cfg,
 grant and finish all ride the narrow bus, so without it no transfer can complete.
@@ -135,6 +143,79 @@ initiator configures the chain outward from the tail; the other six are unchange
 Exactly one node raises `xdma_finish_o` — the initiator — and both chain testbenches assert
 that the other two stay silent. See `run_chain()` in `test/xdma_chain_3node_body.sv` for the
 whole sequence as executable code.
+
+## Concurrent remote transfers into one node
+
+A chain is linear: every node is a hop in exactly one transaction at a time, which is the
+assumption `xdma_grant_manager`'s `WRITE_MIDDLE` / `SEND_GRANT_TO_PREV_HOP` states were
+written under. A node that is the destination of two *unrelated* remote transfers breaks it,
+and that is the star-multicast and multi-issuer-broadcast case.
+
+The receiving node has one `from_remote_data_accompany_cfg` port, so two receive windows
+necessarily arrive one after the other on it. `ready_to_transfer` is a level derived from the
+node's own busy state, and three FSMs used to take that bare level as "my transfer ended":
+
+| FSM | old exit | what it means when a second transfer abuts |
+|---|---|---|
+| `xdma_grant_manager` `WAIT_FINISH` | `grant_valid == 0` | never returns to `IDLE`, so the second sender is never granted |
+| `xdma_finish_manager` `WriteLastBusy` | `~ready_to_transfer` | the first transfer's finish is never cascaded back, so its sender waits forever |
+| `xdma_finish_manager` `ReadBusy` | `~ready_to_transfer` | a write landing behind a local read wedges the read's completion |
+
+Each now compares the live port against the `(dma_id, src_addr)` it latched when it armed,
+so "the window closed" means *the port stopped naming my transfer* rather than *the node went
+idle*. Both fields are needed: `dma_id` is only unique per source.
+
+**Scope.** A sending side that drops the level between transfers never presents a changed
+identity while the level is high, and against it these predicates are equivalent to the levels
+they replace. They make each FSM's exit condition local rather than dependent on that property,
+which is what a fabric-replicated multicast would require.
+
+The three `multisource` testbenches differ in one parameter each and isolate the effect:
+
+* **`serial`** — the destination fully closes window A, and A retires, before B is named.
+  One context is enough for that, so this passed before the change too. It is the control:
+  it proves the other two arms fail because of the abutting windows and nothing else.
+* **`collision`** — B opens on the cycle A stops being named. Before the change this wedged
+  all three nodes: the destination in `WAIT_FINISH` + `WriteLastBusy`, both senders in
+  `WriteFirstBusy`, 8 of 16 beats delivered.
+* **`read_collision`** — the destination is already taking delivery of a remote read of its
+  own when the writes arrive. Before the change this tripped
+  `i_xdma_finish_manager.i_read_stall_watchdog` on the receiver.
+
+Two further defects live in the same area and were found alongside it. Both are independent of
+the above and were reproduced on the real frontend.
+
+**`xdma_finish_o` could not be counted.** It is one bit shared by three completion sources and
+carries no id, so the frontend can only tell two completions apart by counting assertions. It
+was driven from FSM1's and FSM2's *held valid levels*, and the arbitration below them gives
+FSM3's single-cycle pulse priority — so a held-but-not-yet-accepted completion kept the output
+high for a second cycle. One task retiring and two tasks retiring produced the identical
+waveform, and no counting rule can be right about both. It is now pinned to the **accepted
+handshakes**, exactly as `xdma_write_finish_o` beside it already was.
+
+**A node that both sends and receives.** `SpuriousFinishGuard` retracts a head claim on
+`dma_type & ready_to_transfer & ~is_first_cw`. That predicate uses chain POSITION, and position
+cannot tell a spurious claim from a genuine outgoing write on a node that also receives — both
+present the same bits. So a node receiving any remote write had its head claim retracted,
+including the claim on its own unrelated outgoing transfer, and could not re-arm: the to-remote
+window is only ~3 cycles, so once retracted there is nothing left to arm on. Its own task then
+never completed, with **nothing stalling and no watchdog firing**.
+
+The retract now also passes when the node OWNS the outgoing task. Two forms, because the two
+uses sample at different times — the same live-versus-latched split `to_remote_dma_id_q` exists
+for. Arming is evaluated with `head_claim`, so the live `is_initiator` describes the claim;
+retracting fires from `WriteFirstBusy` with no `head_claim` term, long after the window closed,
+so it uses `to_remote_is_initiator_q`.
+
+`tb_xdma_mutual_exchange_2node_drop` covers it.
+
+**What this does not do.** Contexts are still singular, so a context retires on its own
+schedule while the next one arms behind it. At today's transfer lengths the margin is ample
+(the second sender's grant round trip is far longer than the first's finish send), but it is
+a margin, not a guarantee. Replicating the contexts per source — one armed while another
+retires — is what turns it into one; the adapter needs that only once the Chisel frontend can
+present genuinely overlapping receive windows, which with a single accompany-cfg port it
+cannot today.
 
 ### Bring-up diagnostics
 

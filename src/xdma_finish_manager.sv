@@ -17,40 +17,25 @@ module xdma_finish_manager #(
     parameter type         xdma_to_remote_finish_t               = logic,
     /// Guard against a node mistaking itself for the head of a chain it is only a hop in.
     ///
-    /// FSM2 below decides "I am the head of a chained write" purely from the *to-remote*
-    /// accompany cfg (`dma_type & ready_to_transfer & is_first_cw & ~is_last_cw`). In
-    /// ChainWrite a middle node's reader never runs, so that branch is dead there. In
-    /// ChainGather a middle node's reader *does* run concurrently, supplying the junction's
-    /// local operand, and the Chisel side derives `toRemoteAccompaniedCfg.readyToTransfer`
-    /// from `readerBusy` (`XDMADataPath.scala`) while `is_first_cw` reads 1 for a
-    /// locally-originated reader (`XDMACfgIO.scala`). The reader starts BEFORE the gather
-    /// state machine latches, so for a few cycles the to-remote port reads exactly like a
-    /// fresh chain head.
+    /// FSM2 decides "I am the head of a chained write" from the *to-remote* accompany cfg
+    /// alone (`dma_type & ready_to_transfer & is_first_cw & ~is_last_cw`). A node whose local
+    /// reader runs while it is also taking delivery of a chain can present that exact shape
+    /// without heading anything, and arming FSM2 on it is a one-way door: `WriteFirstBusy` has
+    /// no exit but an id-matched finish, and the id latched from a transient need never match
+    /// one. A parked FSM2 then:
     ///
-    /// Unguarded, one such cycle is enough to wedge the node permanently, because arming
-    /// FSM2 is a one-way door -- `WriteFirstBusy` has no exit but an id-matched finish:
+    ///   - releases a grant credit through `xdma_write_finish_o` that the node never reserved;
+    ///   - holds `from_remote_finish_ready_o` high, acknowledging and destroying finish beats
+    ///     meant for FSM3, so chains form and never retire;
+    ///   - cannot serve a task the node genuinely heads, so that initiator's core never
+    ///     completes.
     ///
-    ///   1. FSM2 latches and, on the chain's finish, releases a grant credit through
-    ///      `xdma_write_finish_o` that this node never reserved.
-    ///   2. The transient carries whatever `dma_id` the to-remote port happens to show. The
-    ///      sender's cfg queue keeps driving its POPPED frame between tasks, so on the next
-    ///      task the latched id is the PREVIOUS task's, no finish can ever match it, and
-    ///      FSM2 parks in `WriteFirstBusy` for the rest of the run.
-    ///   3. A parked FSM2 holds `from_remote_finish_ready_o` high, so it acknowledges and
-    ///      destroys finish beats meant for FSM3 -- chains that form and never retire.
-    ///   4. Being parked, FSM2 can no longer serve a task this node genuinely heads, and
-    ///      that initiator's core waits forever.
-    ///
-    /// Set, FSM2 additionally requires that this node is not taking delivery of chained-write
+    /// Set, FSM2 additionally requires that the node is not taking delivery of chained-write
     /// data, both to arm and to STAY armed: a chain's head sources the payload and never
-    /// receives it, so a claim is retracted the moment the node proves itself a hop. Covering
-    /// the busy state as well as the arm is what makes the guard work in the reader-first
-    /// ordering the hardware actually produces -- an arm-only guard is inert there, since the
-    /// receive window has not opened yet when the transient appears.
+    /// receives it. Covering the busy state as well as the arm matters because the local reader
+    /// leads the receive window, so an arm-only guard sees nothing to act on.
     ///
-    /// This rests on the frontend running one task at a time per node, so a node is never
-    /// simultaneously the head of one chain and a hop in another. `XDMACtrl`'s dst FSM is
-    /// serial, so that holds. Clear the parameter only to reproduce the pre-guard behaviour;
+    /// Clear the parameter only to obtain the unguarded behaviour;
     /// `tb_xdma_finish_manager_guard` instantiates both.
     parameter bit          SpuriousFinishGuard                   = 1'b1,
     /// Bring-up stall watchdog: consecutive cycles any of the three FSMs below may sit in
@@ -122,7 +107,13 @@ module xdma_finish_manager #(
   // combinationally at that point would read whatever happens to be on the port.
   logic  to_remote_is_initiator_q;
   logic  from_remote_is_initiator_q;
-  logic to_remote_dma_id_en, from_remote_dma_id_en, from_remote_addr_en;
+  // FSM1 gets its own copy. FSM1 and FSM3 arm on mutually exclusive values of `dma_type`,
+  // but they can be busy at the same time -- a node pulling a remote read while a remote
+  // write lands on it is exactly the "receiver is not idle" case -- and each must judge its
+  // own window against its own transfer.
+  id_t   read_dma_id_q;
+  addr_t read_addr_q;
+  logic to_remote_dma_id_en, from_remote_dma_id_en, from_remote_addr_en, read_ctx_en;
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       to_remote_dma_id_q        <= '0;
@@ -130,6 +121,8 @@ module xdma_finish_manager #(
       from_remote_addr_q        <= '0;
       to_remote_is_initiator_q  <= 1'b0;
       from_remote_is_initiator_q <= 1'b0;
+      read_dma_id_q             <= '0;
+      read_addr_q               <= '0;
     end else begin
       if (to_remote_dma_id_en) begin
         to_remote_dma_id_q       <= to_remote_data_accompany_cfg_i.dma_id;
@@ -140,8 +133,34 @@ module xdma_finish_manager #(
         from_remote_is_initiator_q <= from_remote_data_accompany_cfg_i.is_initiator;
       end
       if (from_remote_addr_en) from_remote_addr_q <= from_remote_data_accompany_cfg_i.src_addr;
+      if (read_ctx_en) begin
+        read_dma_id_q <= from_remote_data_accompany_cfg_i.dma_id;
+        read_addr_q   <= from_remote_data_accompany_cfg_i.src_addr;
+      end
     end
   end
+
+  // "The from-remote port still names the transfer this FSM armed on."
+  //
+  // `ready_to_transfer` is a LEVEL held by the receiving node's datapath for as long as it is
+  // busy, so a bare `~ready_to_transfer` exit means "the node went idle", not "my transfer
+  // ended". Comparing the live port against the identity latched at arm time says the second,
+  // which is what these FSMs need: a receive window is over when the port stops naming its
+  // transfer, whether or not the node has gone quiet. `src_addr` is compared alongside `dma_id`
+  // because ids are only unique per source.
+  //
+  // A frontend that changes the identity and the level together makes these equivalent to the
+  // level alone. They hold for one that does not. `tb_xdma_multisource_*` drives the case where
+  // two receive windows abut with the level never falling.
+  logic read_ctx_open, from_remote_ctx_open;
+  assign read_ctx_open = from_remote_data_accompany_cfg_i.ready_to_transfer
+                       & (~from_remote_data_accompany_cfg_i.dma_type)
+                       & (from_remote_data_accompany_cfg_i.dma_id == read_dma_id_q)
+                       & (from_remote_data_accompany_cfg_i.src_addr == read_addr_q);
+  assign from_remote_ctx_open = from_remote_data_accompany_cfg_i.ready_to_transfer
+                              & from_remote_data_accompany_cfg_i.dma_type
+                              & (from_remote_data_accompany_cfg_i.dma_id == from_remote_dma_id_q)
+                              & (from_remote_data_accompany_cfg_i.src_addr == from_remote_addr_q);
 
   // The declaration for the FSM
   xdma_read_status_t read_current_state, read_next_state;
@@ -162,14 +181,16 @@ module xdma_finish_manager #(
   always_comb begin
     read_next_state   = read_current_state;
     read_finish_valid = 1'b0;
+    read_ctx_en       = 1'b0;
     case (read_current_state)
       ReadIdle: begin
         if ((~from_remote_data_accompany_cfg_i.dma_type) && from_remote_data_accompany_cfg_i.ready_to_transfer) begin
+          read_ctx_en     = 1'b1;
           read_next_state = ReadBusy;
         end
       end
       ReadBusy: begin
-        if (~from_remote_data_accompany_cfg_i.ready_to_transfer) begin
+        if (!read_ctx_open) begin
           read_finish_valid = 1'b1;
           if (read_finish_ready) begin
             read_next_state = ReadIdle;
@@ -202,10 +223,14 @@ module xdma_finish_manager #(
   // Two signals to send the write finish to XDMACtrl
   logic first_write_finish_valid, first_write_finish_ready;
 
-  // "This node is taking delivery of a chain's payload" -- deliberately the same predicate
-  // FSM3 arms on below, so the two FSMs are mutually exclusive by construction rather than
-  // by timing. A bare `ready_to_transfer` is not enough: it is also high for a plain
-  // (non-chained) remote write, which says nothing about chain position.
+  // "This node is taking delivery of a chained write's payload."
+  //
+  // True for a MIDDLE hop and for a TAIL, since both have `is_first_cw` clear. A bare
+  // `ready_to_transfer` would not do: it is also high for a plain remote write, which says
+  // nothing about chain position.
+  //
+  // Deliberately the same predicate FSM3's middle branch arms on, so the two FSMs are mutually
+  // exclusive by construction rather than by timing.
   logic receiving_chained_write;
   assign receiving_chained_write = from_remote_data_accompany_cfg_i.dma_type
                                  & from_remote_data_accompany_cfg_i.ready_to_transfer
@@ -219,9 +244,35 @@ module xdma_finish_manager #(
                     & (~to_remote_data_accompany_cfg_i.is_last_cw);
 
   // See `SpuriousFinishGuard` above: a node taking delivery of a chain's data is not that
-  // chain's head, so it may neither claim the role nor keep a claim it already took.
-  logic not_receiving_chained_write;
-  assign not_receiving_chained_write = ~SpuriousFinishGuard | ~receiving_chained_write;
+  // chain's head, so it may neither claim the role nor keep a claim it already took --
+  // unless the claim is on a task this node issued itself (`is_initiator`).
+  //
+  // `receiving_chained_write` is a POSITION predicate, and position cannot separate a spurious
+  // claim from a genuine outgoing transfer on a node that also receives: both present
+  // `dma_type=1, is_first_cw=1, is_last_cw=0`. Ownership separates them. A chain head never
+  // owns the task in ChainGather -- the collector does -- so a claim the guard exists to
+  // suppress carries `is_initiator = 0`, and one that must survive carries 1. Two plain remote
+  // writes crossing in opposite directions put a node in both roles at once, and without the
+  // ownership term that node loses its own completion with nothing stalling and no watchdog
+  // firing: its claim is retracted when the incoming window opens, and the to-remote window is
+  // a few cycles long, so there is nothing left to re-arm on.
+  //
+  // Two forms, because the two uses sample at different times -- the same live-versus-latched
+  // split `to_remote_dma_id_q` exists for:
+  //
+  //   ARM     evaluated together with `head_claim`, so the to-remote port is describing the
+  //           claim and the live `is_initiator` is the right copy.
+  //   RETRACT evaluated from `WriteFirstBusy` with no `head_claim` term -- the point is to drop
+  //           a claim after the fact -- and by then the window has closed and the live port is
+  //           showing the next frame or nothing. Use the copy latched when the claim was taken.
+  logic not_receiving_chained_write;      // arm
+  logic keep_claim_while_receiving;       // stay armed
+  assign not_receiving_chained_write = ~SpuriousFinishGuard
+                                     | ~receiving_chained_write
+                                     | to_remote_data_accompany_cfg_i.is_initiator;
+  assign keep_claim_while_receiving  = ~SpuriousFinishGuard
+                                     | ~receiving_chained_write
+                                     | to_remote_is_initiator_q;
   always_comb begin
     first_write_next_state = first_write_current_state;
     first_write_finish_valid = 1'b0;
@@ -237,7 +288,7 @@ module xdma_finish_manager #(
         // Retract the claim as soon as the node proves it is only a hop. Without this the
         // guard is inert in the ordering the hardware produces, where the local reader --
         // and so the head-shaped transient -- leads the receive window by several cycles.
-        if (!not_receiving_chained_write) begin
+        if (!keep_claim_while_receiving) begin
           first_write_next_state = WriteFirstIdle;
         end else if (from_remote_finish_valid_i &&
                      from_remote_finish.dma_id == to_remote_dma_id_q) begin
@@ -270,10 +321,23 @@ module xdma_finish_manager #(
   // Gating the OUTPUT rather than the FSM matters: a non-initiator head must still run
   // FSM2 to completion, because `xdma_write_finish_o` below is what releases its grant
   // credit. The backwards finish cascade is identical in both modes.
+  //
+  // Pinned to the ACCEPTED handshakes, not to the held valid levels -- the same discipline
+  // `xdma_write_finish_o` below follows, and for the same reason.
+  //
+  // `xdma_finish_o` is one bit carrying no id and no count, so the frontend can only tell two
+  // completions apart by counting assertions. FSM1's and FSM2's valids are LEVELS held until
+  // their handshake, and the arbitration right below gives FSM3's single-cycle pulse priority
+  // over both, so a completion that has to wait its turn stays asserted across the cycle it was
+  // denied. Driven from the raw levels the output would then be high for two cycles whether one
+  // task or two had retired -- one waveform for two counts, which no counting rule can read
+  // correctly. Gating on the accepted handshake makes it exactly one cycle per retired task.
+  // `tail_write_finish_valid` is already handshake-pinned, so it needs no extra term.
   logic tail_write_finish_valid;
   assign xdma_finish_o = (tail_write_finish_valid & from_remote_is_initiator_q)
-                       | read_finish_valid
-                       | (first_write_finish_valid & to_remote_is_initiator_q);
+                       | (read_finish_valid & read_finish_ready)
+                       | (first_write_finish_valid & first_write_finish_ready
+                          & to_remote_is_initiator_q);
   always_comb begin
     read_finish_ready = '0;
     first_write_finish_ready = '0;
@@ -332,7 +396,7 @@ module xdma_finish_manager #(
         end
       end
       WriteLastBusy: begin
-        if (~from_remote_data_accompany_cfg_i.ready_to_transfer) begin
+        if (!from_remote_ctx_open) begin
           last_write_next_state = WriteLastFinish;
         end
       end

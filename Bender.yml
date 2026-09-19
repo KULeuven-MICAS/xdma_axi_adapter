@@ -44,3 +44,11 @@ sources:
       - test/tb_xdma_chain_gather_3node.sv
       - test/tb_xdma_chain_gather_transient_3node.sv
       - test/tb_xdma_finish_manager_gather_rearm.sv
+      - test/xdma_multisource_2to1_body.sv
+      - test/tb_xdma_multisource_serial.sv
+      - test/tb_xdma_multisource_collision.sv
+      - test/tb_xdma_multisource_read_collision.sv
+      - test/tb_xdma_finish_manager_completion_merge.sv
+      - test/xdma_mutual_exchange_2node_body.sv
+      - test/tb_xdma_mutual_exchange_2node.sv
+      - test/tb_xdma_mutual_exchange_2node_drop.sv
