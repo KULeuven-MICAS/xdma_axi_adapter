@@ -50,7 +50,12 @@
 // arms pin the behaviour required of one that does not, which is what a fabric-replicated
 // multicast would present.
 //
-// All three arms assert the CORRECT behaviour: both writes deliver their payload intact and in
+// A FOURTH arm, `DestAlsoIssues`, adds the one thing none of the three has: node 2 runs its
+// own remote write back to node 0 while it is taking delivery. Every node is then both an
+// issuer and a destination, which is what `docs/xdma_multi_issuer_multicast_hang.md` reports
+// hanging in HeMAiA, reduced to the two-issuer bisect that document asks for.
+//
+// All arms assert the CORRECT behaviour: both writes deliver their payload intact and in
 // order, each sender reports exactly one `xdma_finish_o`, the receiver reports none, and no
 // watchdog latches.
 
@@ -65,15 +70,24 @@ module xdma_multisource_2to1_body #(
     /// 1 = node 2 is already taking delivery of a remote READ of its own when the first
     ///     write's window opens behind it -- the "receiver is not idle" case. It lands on the
     ///     read FSM rather than the write one.
-    parameter bit ReadFirst        = 1'b0
+    parameter bit ReadFirst        = 1'b0,
+    /// 1 = node 2 is ITSELF an issuer while it takes delivery: it runs its own remote write
+    ///     back to node 0 concurrently. Every node is then both an issuer and a destination,
+    ///     which is the configuration `docs/xdma_multi_issuer_multicast_hang.md` reports
+    ///     hanging, reduced to its two-issuer bisect.
+    parameter bit DestAlsoIssues   = 1'b0
 ) ();
 
-  localparam string ArmName = SerialiseWindows ? "serialised windows"
+  localparam string ArmName = DestAlsoIssues ? "abutting windows, receiver also issuing"
+                            : (SerialiseWindows ? "serialised windows"
                             : (ReadFirst ? "abutting windows behind a local read"
-                                         : "abutting windows");
+                                         : "abutting windows"));
   // Node 2 owns the read task and nothing else, so it reports a completion only in the
   // `ReadFirst` arm.
-  localparam int unsigned C2Finishes = ReadFirst ? 1 : 0;
+  // Node 2 owns the read task in the `ReadFirst` arm and its own outgoing write in the
+  // `DestAlsoIssues` arm; it owns neither otherwise.
+  localparam int unsigned C2Finishes = (ReadFirst ? 1 : 0) + (DestAlsoIssues ? 1 : 0);
+
 
   //====================================================================
   // Protocol typedefs (mirror xdma_axi_adapter_top's body)
@@ -147,9 +161,14 @@ module xdma_multisource_2to1_body #(
   // burst boundaries, and a short transfer makes the two receive windows abut tightly.
   localparam int unsigned TbLen = 32'd8;
 
+  // Beats node 0 must take delivery of: node 2's write, in the arm where node 2 issues one.
+  localparam int unsigned C0RxBeats = DestAlsoIssues ? TbLen : 0;
+
   localparam tb_id_t IdA = 4'd5;
   localparam tb_id_t IdB = 4'd9;
   localparam tb_id_t IdR = 4'd2;
+  // Node 2's own outgoing write, in the `DestAlsoIssues` arm.
+  localparam tb_id_t IdC = 4'd11;
 
   function automatic tb_addr_t cluster_base(input int unsigned i);
     return ClusterBaseAddr + i * ClusterAddressSpace;
@@ -321,17 +340,19 @@ module xdma_multisource_2to1_body #(
   logic [TbNumClusters-1:0] xdma_finish;
   logic [TbNumClusters-1:0] xdma_stall_error;
 
-  // Nodes 0 and 1 source payload; node 2 sinks and sources nothing.
-  tb_wide_data_t s0_data, s1_data;
-  logic          s0_valid, s1_valid;
+  // Nodes 0 and 1 always source payload. Node 2 sinks, and in the `DestAlsoIssues` arm it
+  // sources as well -- which also puts its own outgoing cfg on the narrow bus, where cfg
+  // outranks grant in `find_first_one_idx`.
+  tb_wide_data_t s0_data, s1_data, s2_data;
+  logic          s0_valid, s1_valid, s2_valid;
   wire [TbNumClusters-1:0][TbAxiWideDataWidth-1:0] to_remote_data;
   wire [TbNumClusters-1:0]                         to_remote_data_valid;
   assign to_remote_data[0]       = s0_data;
   assign to_remote_data[1]       = s1_data;
-  assign to_remote_data[2]       = '0;
+  assign to_remote_data[2]       = s2_data;
   assign to_remote_data_valid[0] = s0_valid;
   assign to_remote_data_valid[1] = s1_valid;
-  assign to_remote_data_valid[2] = 1'b0;
+  assign to_remote_data_valid[2] = s2_valid;
 
   for (genvar i = 0; i < TbNumClusters; i++) begin : gen_adapter
     xdma_axi_adapter_top #(
@@ -389,6 +410,8 @@ module xdma_multisource_2to1_body #(
   //====================================================================
   tb_wide_data_t rx_q[$];
   int rx_cnt;
+  tb_wide_data_t rx0_q[$];
+  int rx0_cnt;
   int tx_cnt[TbNumClusters];
   int finish_cnt[TbNumClusters];
   int errors = 0;
@@ -398,6 +421,10 @@ module xdma_multisource_2to1_body #(
       if (from_remote_data_valid[2] && from_remote_data_ready[2]) begin
         rx_q.push_back(from_remote_data[2]);
         rx_cnt++;
+      end
+      if (from_remote_data_valid[0] && from_remote_data_ready[0]) begin
+        rx0_q.push_back(from_remote_data[0]);
+        rx0_cnt++;
       end
       for (int i = 0; i < TbNumClusters; i++) begin
         if (to_remote_data_valid[i] && to_remote_data_ready[i]) tx_cnt[i]++;
@@ -420,6 +447,11 @@ module xdma_multisource_2to1_body #(
              from_remote_acfg[2].dma_id, from_remote_acfg[2].src_addr,
              from_remote_acfg[2].ready_to_transfer);
     // Unrolled: a generate block cannot be indexed by a variable.
+    $display("[TB]   C2 to_remote acfg:   id=%0d dst=%h ready_to_transfer=%0b",
+             to_remote_acfg[2].dma_id, to_remote_acfg[2].dst_addr,
+             to_remote_acfg[2].ready_to_transfer);
+    $display("[TB]   C0 grant_manager.cur_state                  = %s",
+             gen_adapter[0].i_dut.i_xdma_grant_manager.cur_state.name());
     $display("[TB]   C0 finish_manager.first_write_current_state = %s",
              gen_adapter[0].i_dut.i_xdma_finish_manager.first_write_current_state.name());
     $display("[TB]   C1 finish_manager.first_write_current_state = %s",
@@ -428,6 +460,10 @@ module xdma_multisource_2to1_body #(
              tx_cnt[0], tx_cnt[1], rx_cnt, TbLen, 2 * TbLen);
     $display("[TB]   xdma_finish pulses: C0=%0d C1=%0d C2=%0d", finish_cnt[0], finish_cnt[1],
              finish_cnt[2]);
+    if (DestAlsoIssues) begin
+      $display("[TB]   C2 sent %0d beats of its own write, C0 received %0d (expected %0d)",
+               tx_cnt[2], rx0_cnt, TbLen);
+    end
   endtask
 
   always @(posedge clk) begin
@@ -522,6 +558,35 @@ module xdma_multisource_2to1_body #(
     to_remote_acfg[src].is_initiator      <= 1'b1;
   endtask
 
+  // Node 2's own outgoing write, back to node 0. Node 2 is then an issuer at the same time
+  // as it is a destination, and its cfg for this write shares the narrow bus with the grants
+  // it owes nodes 0 and 1.
+  task automatic open_sender_c2(input tb_id_t id);
+    to_remote_acfg[2].dma_id            <= id;
+    to_remote_acfg[2].dma_type          <= 1'b1;
+    to_remote_acfg[2].src_addr          <= cluster_base(2);
+    to_remote_acfg[2].dst_addr          <= cluster_base(0);
+    to_remote_acfg[2].dma_length        <= tb_len_t'(TbLen);
+    to_remote_acfg[2].ready_to_transfer <= 1'b1;
+    to_remote_acfg[2].is_first_cw       <= 1'b1;
+    to_remote_acfg[2].is_last_cw        <= 1'b0;
+    to_remote_acfg[2].is_initiator      <= 1'b1;
+  endtask
+
+  // Node 0's receive window for node 2's write. Node 0 is a sender and a destination at the
+  // same time, so its own grant manager is in use while its wide send is still outstanding.
+  task automatic point_c0_receiver_at_c2(input tb_id_t id);
+    from_remote_acfg[0].dma_id            <= id;
+    from_remote_acfg[0].dma_type          <= 1'b1;
+    from_remote_acfg[0].src_addr          <= cluster_base(2);
+    from_remote_acfg[0].dst_addr          <= cluster_base(0);
+    from_remote_acfg[0].dma_length        <= tb_len_t'(TbLen);
+    from_remote_acfg[0].ready_to_transfer <= 1'b1;
+    from_remote_acfg[0].is_first_cw       <= 1'b0;
+    from_remote_acfg[0].is_last_cw        <= 1'b1;
+    from_remote_acfg[0].is_initiator      <= 1'b0;
+  endtask
+
   // Open a remote-READ receive window on node 2. Only the read FSM in
   // `xdma_finish_manager` watches this -- `dma_type = 0` keeps the grant manager and the
   // middle/last-write FSM in idle -- so no payload is transported for it here; the FSM
@@ -563,16 +628,20 @@ module xdma_multisource_2to1_body #(
       if (src == 0) begin
         s0_data  <= beat(0, i);
         s0_valid <= 1'b1;
-      end else begin
+      end else if (src == 1) begin
         s1_data  <= beat(1, i);
         s1_valid <= 1'b1;
+      end else begin
+        s2_data  <= beat(2, i);
+        s2_valid <= 1'b1;
       end
       @(negedge clk);
       while (!to_remote_data_ready[src]) @(negedge clk);
       @(posedge clk);
     end
     if (src == 0) s0_valid <= 1'b0;
-    else s1_valid <= 1'b0;
+    else if (src == 1) s1_valid <= 1'b0;
+    else s2_valid <= 1'b0;
   endtask
 
   //====================================================================
@@ -585,9 +654,12 @@ module xdma_multisource_2to1_body #(
     from_remote_acfg    = '0;
     s0_data             = '0;
     s1_data             = '0;
+    s2_data             = '0;
     s0_valid            = 1'b0;
     s1_valid            = 1'b0;
+    s2_valid            = 1'b0;
     rx_cnt              = 0;
+    rx0_cnt             = 0;
     for (int i = 0; i < TbNumClusters; i++) begin
       tx_cnt[i]     = 0;
       finish_cnt[i] = 0;
@@ -602,6 +674,9 @@ module xdma_multisource_2to1_body #(
     //---- Phase A: both senders configure the destination ----
     send_cfg(0, 2, IdA);
     send_cfg(1, 2, IdB);
+    // Node 2 configures its own outgoing write in the same phase, so by the time it owes
+    // node 0 and node 1 their grants it is already an issuer with cfg traffic of its own.
+    if (DestAlsoIssues) send_cfg(2, 0, IdC);
     repeat (5) @(posedge clk);
 
     //---- Phase B: BOTH senders go live at once ----
@@ -610,6 +685,10 @@ module xdma_multisource_2to1_body #(
     // reach the bus until node 2 grants it.
     open_sender(0, IdA);
     open_sender(1, IdB);
+    if (DestAlsoIssues) begin
+      open_sender_c2(IdC);
+      point_c0_receiver_at_c2(IdC);
+    end
     @(posedge clk);
 
     if (ReadFirst) begin
@@ -628,6 +707,7 @@ module xdma_multisource_2to1_body #(
     fork
       send_payload(0);
       send_payload(1);
+      if (DestAlsoIssues) send_payload(2);
     join_none
 
     //---- Phase C: A's payload lands, and the receive context turns over ----
@@ -657,6 +737,15 @@ module xdma_multisource_2to1_body #(
     from_remote_acfg[2].ready_to_transfer <= 1'b0;
     to_remote_acfg[1].ready_to_transfer   <= 1'b0;
 
+    // Node 2's own write retires on the same terms: node 0 closes the receive window it
+    // opened for it, and node 2 closes its sender window.
+    if (DestAlsoIssues) begin
+      wait (rx0_cnt == TbLen);
+      @(posedge clk);
+      from_remote_acfg[0].ready_to_transfer <= 1'b0;
+      to_remote_acfg[2].ready_to_transfer   <= 1'b0;
+    end
+
     //---- Phase E: both senders retire ----
     wait (finish_cnt[0] == 1 && finish_cnt[1] == 1 && finish_cnt[2] == C2Finishes);
     repeat (20) @(posedge clk);
@@ -665,6 +754,8 @@ module xdma_multisource_2to1_body #(
     check_int(tx_cnt[0], TbLen, "beats sent by C0");
     check_int(tx_cnt[1], TbLen, "beats sent by C1");
     check_int(rx_cnt, 2 * TbLen, "beats delivered to C2");
+    check_int(tx_cnt[2], DestAlsoIssues ? TbLen : 0, "beats sent by C2");
+    check_int(rx0_cnt, C0RxBeats, "beats delivered to C0");
     // Each sender issued its own task, so each reports exactly one completion; the
     // receiver owns neither and must stay silent.
     check_int(finish_cnt[0], 1, "C0 xdma_finish_o pulses");
@@ -683,6 +774,15 @@ module xdma_multisource_2to1_body #(
         errors++;
         $error("write B payload mismatch at beat %0d\n  expected %h\n  got      %h", i,
                beat(1, i), rx_q[TbLen+i]);
+      end
+    end
+
+    // Node 2's own payload, checked the same way: its beats carry source tag 2.
+    for (int unsigned i = 0; i < C0RxBeats; i++) begin
+      if (rx0_q[i] !== beat(2, i)) begin
+        errors++;
+        $error("C2's own write payload mismatch at beat %0d\n  expected %h\n  got      %h", i,
+               beat(2, i), rx0_q[i]);
       end
     end
 

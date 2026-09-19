@@ -431,6 +431,9 @@ module xdma_axi_adapter_top
   );
   // To remote grant
   xdma_to_remote_grant_t  to_remote_grant;
+  // The accompany cfg `i_xdma_grant_manager` armed on; the grant packet and descriptor are
+  // both built from it rather than from the live receive port.
+  xdma_from_remote_data_accompany_cfg_t grant_armed_cfg;
   logic                   to_remote_grant_valid;
   logic                   to_remote_grant_ready;
   // To remote finish
@@ -503,14 +506,21 @@ module xdma_axi_adapter_top
     //--------------------------------------
     // to remote grant desc
     //--------------------------------------
-    to_remote_grant_desc.dma_id = from_remote_data_accompany_cfg.dma_id;
+    // Built from the cfg the grant manager ARMED on, not from the live port. The grant is
+    // routed by `src_addr`, so a port that moves on mid-transaction would otherwise re-aim
+    // an in-flight grant at another node -- and a `src_addr` of 0 resolves to
+    // `get_cluster_end_addr(0) - MMIOGrantOffset`, an unmapped address the SoC narrow xbar
+    // default-routes onto the narrow->wide bridge and wedges.
+    to_remote_grant_desc.dma_id = grant_armed_cfg.dma_id;
     to_remote_grant_desc.dma_length = 1;
-    to_remote_grant_desc.dma_type = from_remote_data_accompany_cfg.dma_type;
+    to_remote_grant_desc.dma_type = grant_armed_cfg.dma_type;
     to_remote_grant_desc.remote_addr =
-        address_is_main_mem(from_remote_data_accompany_cfg.src_addr) ?
-        get_main_mem_end_addr(from_remote_data_accompany_cfg.src_addr) - MMIOGrantOffset :
-        get_cluster_end_addr(from_remote_data_accompany_cfg.src_addr) - MMIOGrantOffset;
-    to_remote_grant_desc.ready_to_transfer = from_remote_data_accompany_cfg.ready_to_transfer;
+        address_is_main_mem(grant_armed_cfg.src_addr) ?
+        get_main_mem_end_addr(grant_armed_cfg.src_addr) - MMIOGrantOffset :
+        get_cluster_end_addr(grant_armed_cfg.src_addr) - MMIOGrantOffset;
+    // The grant manager holds VALID until the handshake, so this is a stable level for the
+    // whole transaction instead of a live one that can vanish under an in-flight AXI beat.
+    to_remote_grant_desc.ready_to_transfer = to_remote_grant_valid;
 
   end
 
@@ -843,9 +853,10 @@ module xdma_axi_adapter_top
   //--------------------------------------
   // Grant Manager
   //--------------------------------------
+  // Same rule as the descriptor above: the packet names the transfer the FSM armed on.
   always_comb begin
-    to_remote_grant.dma_id = from_remote_data_accompany_cfg.dma_id;
-    to_remote_grant.from = from_remote_data_accompany_cfg.src_addr;
+    to_remote_grant.dma_id = grant_armed_cfg.dma_id;
+    to_remote_grant.from = grant_armed_cfg.src_addr;
     to_remote_grant.reserved = '0;
   end
   logic grant_manager_stall_error;
@@ -859,6 +870,7 @@ module xdma_axi_adapter_top
       .from_remote_data_accompany_cfg_i(from_remote_data_accompany_cfg),
       .to_remote_grant_valid_o         (to_remote_grant_valid),
       .to_remote_grant_ready_i         (to_remote_grant_ready),
+      .armed_cfg_o                     (grant_armed_cfg),
       .stall_error_o                   (grant_manager_stall_error)
   );
   //--------------------------------------

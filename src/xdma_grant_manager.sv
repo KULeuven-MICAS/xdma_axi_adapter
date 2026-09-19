@@ -20,6 +20,10 @@ module xdma_grant_manager #(
     output logic                                 to_remote_grant_valid_o,
     ///
     input  logic                                 to_remote_grant_ready_i,
+    /// The accompany cfg this FSM armed on, held for as long as the grant is being offered.
+    /// The grant PACKET must be built from this and not from the live port: see the comment
+    /// on `ctx_cfg_q` below.
+    output xdma_from_remote_data_accompany_cfg_t armed_cfg_o,
     /// Sticky: this FSM stalled for `StallTimeout` cycles. Tied low when the watchdog
     /// is disabled.
     output logic                                 stall_error_o
@@ -56,9 +60,10 @@ module xdma_grant_manager #(
   // `tb_xdma_multisource_collision` and `tb_xdma_multisource_read_collision` drive the case
   // where two receive windows abut with the level never falling.
   //
-  // Widths are taken from the port so the module still needs no type parameters.
-  logic [ $bits(from_remote_data_accompany_cfg_i.dma_id)-1:0] ctx_dma_id_q;
-  logic [$bits(from_remote_data_accompany_cfg_i.src_addr)-1:0] ctx_src_addr_q;
+  // The WHOLE cfg is latched, not just the identity, because the grant packet is built from
+  // it -- see `armed_cfg_o`.
+  xdma_from_remote_data_accompany_cfg_t ctx_cfg_q;
+  assign armed_cfg_o = ctx_cfg_q;
   assign is_write_middle = (from_remote_data_accompany_cfg_i.dma_type == 1'b1) &&
                          (!from_remote_data_accompany_cfg_i.is_first_cw) &&
                          (!from_remote_data_accompany_cfg_i.is_last_cw) &&
@@ -73,17 +78,15 @@ module xdma_grant_manager #(
 
   // "The port still names the transfer this FSM armed on." Both fields matter: `dma_id` is
   // only unique per source, so two sources can legitimately have the same id in flight.
-  assign ctx_match = (from_remote_data_accompany_cfg_i.dma_id == ctx_dma_id_q) &&
-                     (from_remote_data_accompany_cfg_i.src_addr == ctx_src_addr_q);
+  assign ctx_match = (from_remote_data_accompany_cfg_i.dma_id == ctx_cfg_q.dma_id) &&
+                     (from_remote_data_accompany_cfg_i.src_addr == ctx_cfg_q.src_addr);
   assign ctx_open  = grant_valid && ctx_match;
 
   always_ff @(posedge clk_i, negedge rst_ni) begin
     if (!rst_ni) begin
-      ctx_dma_id_q   <= '0;
-      ctx_src_addr_q <= '0;
+      ctx_cfg_q <= '0;
     end else if (ctx_en) begin
-      ctx_dma_id_q   <= from_remote_data_accompany_cfg_i.dma_id;
-      ctx_src_addr_q <= from_remote_data_accompany_cfg_i.src_addr;
+      ctx_cfg_q <= from_remote_data_accompany_cfg_i;
     end
   end
   // State Update
@@ -129,15 +132,24 @@ module xdma_grant_manager #(
       IDLE: to_remote_grant_valid_o = 1'b0;
       WRITE_LAST: to_remote_grant_valid_o = 1'b0;
       WRITE_MIDDLE: to_remote_grant_valid_o = 1'b0;
-      // `ctx_open`, not `grant_valid`. The grant PACKET is assembled in
-      // `xdma_axi_adapter_top` from the LIVE port -- `to_remote_grant.from` and the
-      // destination MMIO address both come from `from_remote_data_accompany_cfg.src_addr`.
-      // Qualifying the valid with `ctx_match` makes "the packet describes the transfer this
-      // FSM armed on" true by construction, instead of resting on the cross-module argument
-      // that a sender cannot advance before its grant (true today, but not local to this
-      // file). If the port ever does move on first, the FSM parks and the watchdog names
-      // it -- a loud stall rather than a grant silently delivered to the wrong node.
-      SEND_GRANT_TO_PREV_HOP: to_remote_grant_valid_o = ctx_open;
+      // UNCONDITIONAL once this FSM has committed. It must not be qualified by the live
+      // port, in any form.
+      //
+      // The correctness that qualification was buying -- "the packet describes the transfer
+      // this FSM armed on" -- now comes from `armed_cfg_o`: the packet is built in
+      // `xdma_axi_adapter_top` from the LATCHED cfg, so it names the right node by
+      // construction whatever the port does next. That is the same shape the finish path
+      // already has, where `to_remote_finish_valid_o` is likewise unconditional and the
+      // packet comes from `from_remote_addr_q`.
+      //
+      // Qualifying it instead trades a wrong grant for a lost one. AXI VALID may not be
+      // retracted before its handshake, and this FSM leaves this state only on that
+      // handshake, so a port that moves on while the grant is still queued behind the narrow
+      // bus -- cfg outranks grant in `find_first_one_idx`, so a node that is also an issuer
+      // queues grants behind its own cfg -- parks the FSM for good. The sender then waits
+      // forever for a grant that was committed and never sent, which is a silent hang at the
+      // far end and a stall watchdog here.
+      SEND_GRANT_TO_PREV_HOP: to_remote_grant_valid_o = 1'b1;
       WAIT_FINISH: to_remote_grant_valid_o = 1'b0;
     endcase
   end

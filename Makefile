@@ -20,6 +20,8 @@ TBS           ?= find_first_one_idx \
                  xdma_multisource_serial \
                  xdma_multisource_collision \
                  xdma_multisource_read_collision \
+                 xdma_multisource_send_while_receiving \
+                 xdma_grant_commit \
                  xdma_finish_manager_completion_merge \
                  xdma_mutual_exchange_2node \
                  xdma_mutual_exchange_2node_drop
