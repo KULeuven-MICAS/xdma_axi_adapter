@@ -87,6 +87,18 @@ module xdma_axi_adapter_top
     // failure chain, and `tb_xdma_finish_manager_gather_rearm` for each link of
     // it as a directed test.
     parameter bit          SpuriousFinishGuard             = 1'b1,
+    // Whole-burst remote writes, on the wide (data) path. A data burst's AW
+    // leaves only once every beat of the burst sits in a buffer, and its W
+    // beats then follow back to back. Without it the AW goes out as soon as a
+    // W beat is ready -- possibly a beat of the burst before -- and a burst
+    // whose data then runs out holds the write order of every shared AXI port
+    // on its path: with two chains through one chip's shared wide path, each
+    // waits on the other. Default ON. See `xdma_req_backend` (WholeBurstWrite)
+    // and `tb_xdma_concurrent_chains`.
+    parameter bit          RemoteWriteWholeBurst           = 1'b1,
+    // The buffer, in beats: at least the longest burst the wide path issues
+    // (a 4 KiB page; 64 beats at 512 bit).
+    parameter int unsigned RemoteWriteBufBeats             = 4096 / (AxiWideDataWidth / 8),
 
     //==========================================================
     // Derived widths — DO NOT OVERRIDE
@@ -768,6 +780,8 @@ module xdma_axi_adapter_top
       // The wide path's only request idx is ToRemoteData (data-write burst);
       // naming it lets the burst reshaper recognise write bursts by enum.
       .WriteDataIdx      (ToRemoteData),
+      .WholeBurstWrite   (RemoteWriteWholeBurst),
+      .WBufBeats         (RemoteWriteBufBeats),
       .axi_out_req_t     (axi_wide_out_req_t),
       .axi_out_resp_t    (axi_wide_out_resp_t)
   ) i_xdma_wide_req_backend (

@@ -41,6 +41,16 @@ module xdma_req_backend #(
     // rationale. Caller (xdma_axi_adapter_top) supplies the appropriate
     // enum literal (`ToRemoteData` for the wide instance).
     parameter xdma_req_idx_t WriteDataIdx = '0,
+    // Whole-burst writes. Every request on this instance is a write-data burst (the wide path's
+    // only request is ToRemoteData). Its data first fills a buffer of WBufBeats beats; a burst's
+    // AW leaves only once every beat of THAT burst is in the buffer, and its W beats leave only
+    // after its AW, back to back. A burst that holds a shared AXI port's write order (an
+    // interconnect delivers W in AW order) then always has its data, whatever the beats behind
+    // it are waiting for. Clear: the AW leaves as soon as a W beat is ready, as before.
+    parameter bit          WholeBurstWrite = 1'b0,
+    // At least the longest burst the reshaper cuts (a 4 KiB page; 64 beats at 512 bit),
+    // otherwise such a burst could never be whole in the buffer.
+    parameter int unsigned WBufBeats       = 32'd64,
 
     /// Enable or disable tracing
     parameter bit  DmaTracing     = 0,
@@ -176,6 +186,13 @@ module xdma_req_backend #(
   logic  w_last;
   logic  w_valid;
   logic  w_ready;
+  // The data path's input: the request data itself, or with WholeBurstWrite the buffer's head
+  data_t dp_data;
+  logic  dp_data_valid;
+  logic  dp_data_ready;
+  // With WholeBurstWrite: the AW at the head of the emitter may leave (its whole burst is
+  // buffered); without, always
+  logic  aw_burst_whole;
   xdma_data_path #(
       .data_t           (data_t),
       .strb_t           (strb_t),
@@ -183,10 +200,10 @@ module xdma_req_backend #(
   ) i_xdma_data_path (
       .clk_i                 (clk_i),
       .rst_ni                (rst_ni),
-      // Data 
-      .write_req_data_i      (write_req_data_i),
-      .write_req_data_valid_i(write_req_data_valid_i),
-      .write_req_data_ready_o(write_req_data_ready_o),
+      // Data
+      .write_req_data_i      (dp_data),
+      .write_req_data_valid_i(dp_data_valid),
+      .write_req_data_ready_o(dp_data_ready),
       // Grant
       .write_req_grant_i     (write_req_grant_i),
       // From W emitter
@@ -202,6 +219,72 @@ module xdma_req_backend #(
   );
   assign w_dp_valid = !w_emitter_empty;
   assign w_emitter_pop = w_dp_ready & !w_emitter_empty;
+
+  //--------------------------------------
+  // Whole-burst buffer (WholeBurstWrite)
+  //--------------------------------------
+  if (WholeBurstWrite) begin : gen_whole_burst
+    // The longest burst the reshaper cuts: a 4 KiB page, or 256 beats when a page holds more
+    localparam int unsigned BeatBytes     = $bits(data_t) / 8;
+    localparam int unsigned MaxBurstBeats = (256 * BeatBytes > 4096) ? 4096 / BeatBytes : 256;
+    localparam int unsigned CntWidth      = $clog2(WBufBeats + 1);
+    if (WBufBeats < MaxBurstBeats) begin : gen_bad_depth
+      $fatal(1, "xdma_req_backend: WBufBeats = %0d cannot hold a whole %0d-beat burst",
+             WBufBeats, MaxBurstBeats);
+    end
+
+    logic                                       buf_in_ready, buf_valid;
+    logic [((WBufBeats > 1) ? $clog2(WBufBeats) : 1)-1:0] buf_usage;
+    logic [CntWidth-1:0]                        buf_beats;       // beats in the buffer
+    // Beats of the bursts whose AW has left and that are still to go out on W. They are the
+    // oldest in the buffer (an AW leaves only once its burst is in it).
+    logic [CntWidth-1:0]                        owed_q, owed_d;
+    logic [CntWidth-1:0]                        head_burst_beats;
+
+    // Data is taken only for a granted transfer, as the data path takes it without the buffer
+    stream_fifo #(
+        .FALL_THROUGH(1'b0),
+        .DEPTH       (WBufBeats),
+        .T           (data_t)
+    ) i_w_buf (
+        .clk_i     (clk_i),
+        .rst_ni    (rst_ni),
+        .flush_i   (1'b0),
+        .testmode_i(1'b0),
+        .usage_o   (buf_usage),
+        .data_i    (write_req_data_i),
+        .valid_i   (write_req_data_valid_i & write_req_grant_i),
+        .ready_o   (buf_in_ready),
+        .data_o    (dp_data),
+        .valid_o   (buf_valid),
+        .ready_i   (dp_data_ready & (owed_q != '0))
+    );
+    assign write_req_data_ready_o = buf_in_ready & write_req_grant_i;
+    // a W beat goes out only for a burst whose AW has left
+    assign dp_data_valid          = buf_valid & (owed_q != '0);
+
+    // usage_o reads 0 when the buffer is full
+    assign buf_beats        = buf_in_ready ? CntWidth'(buf_usage) : CntWidth'(WBufBeats);
+    assign head_burst_beats = CntWidth'(current_req_aw_desc.len) + CntWidth'(1);
+    // the head AW's burst is whole once the beats past those still owed cover it
+    assign aw_burst_whole   = (buf_beats - owed_q) >= head_burst_beats;
+
+    always_comb begin
+      owed_d = owed_q;
+      if (aw_emitter_pop) owed_d = owed_d + head_burst_beats;
+      if (w_valid && w_ready) owed_d = owed_d - CntWidth'(1);
+    end
+
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (!rst_ni) owed_q <= '0;
+      else owed_q <= owed_d;
+    end
+  end else begin : gen_pass_through
+    assign dp_data                = write_req_data_i;
+    assign dp_data_valid          = write_req_data_valid_i;
+    assign write_req_data_ready_o = dp_data_ready;
+    assign aw_burst_whole         = 1'b1;
+  end
   //--------------------------------------
   // Refill control
   //--------------------------------------
@@ -259,7 +342,14 @@ module xdma_req_backend #(
     // node's OUTGOING grant to its PREV hop. The prev hop then never sends data, so the data W is
     // never ready: deadlock. Gating AW on w_valid makes the grant win, breaking the cycle. Harmless
     // for normal writes (data is already present, so w_valid is high and the AW is not delayed).
-    axi_dma_req_o.aw_valid = (current_req_aw_desc.is_write_data)? ~aw_emitter_empty && write_req_grant_i && w_valid : ~aw_emitter_empty;
+    // w_valid is the beat on the bus now, which can still belong to the burst BEFORE: the AW of
+    // the next burst then leaves before any of its own data exists, and a burst can run dry in
+    // the middle. With WholeBurstWrite the AW instead waits until its own burst is buffered
+    // whole (aw_burst_whole), so the data of a burst that has taken a shared port's write order
+    // is always there.
+    axi_dma_req_o.aw_valid = (current_req_aw_desc.is_write_data) ?
+        ~aw_emitter_empty && write_req_grant_i && (WholeBurstWrite ? aw_burst_whole : w_valid) :
+        ~aw_emitter_empty;
     aw_emitter_pop         = axi_dma_resp_i.aw_ready & axi_dma_req_o.aw_valid;
     // B signals
     // we are always ready to accept b signals, as we do not need them

@@ -27,6 +27,8 @@ pulls this repo's own testbenches into the compile. Testbenches:
 | `tb_xdma_mutual_exchange_2node` | 2 clusters writing to each other at once, sender window held |
 | `tb_xdma_mutual_exchange_2node_drop` | the same, sender window dropped once the data is out |
 | `tb_xdma_finish_manager_completion_merge` | `xdma_finish_o` must report one cycle per retired task |
+| `tb_xdma_concurrent_chains` | 3 chips x 2 clusters, two ChainGathers at once through shared per-chip paths: both complete |
+| `tb_xdma_concurrent_chains_deadlock` | the same with `RemoteWriteWholeBurst` off: must deadlock |
 
 The two chain testbenches share `test/xdma_chain_3node_body.sv` and differ only in one
 parameter — which is the point: the transport is identical and only task ownership moves.
@@ -239,3 +241,29 @@ for:
 Fanchen Kong (fanchen.kong@kuleuven.be)
 
 Yunhao Deng (yunhao.deng@kuleuven.be)
+
+## Two chains through one chip (whole-burst remote writes)
+
+A multi-chip system that reduces one output slice per cluster runs two ChainGathers at once:
+one through every chip's cluster 0, one through every cluster 1. Both clusters of a chip
+reach the network through one wide outbound path and receive through one inbound path, and an
+AXI interconnect delivers W beats in the order of its accepted AWs. A middle hop forwards only
+as fast as it receives.
+
+Without `RemoteWriteWholeBurst` a data burst's AW leaves as soon as a W beat is ready, and
+that beat can still belong to the burst before. So an AW reaches the chip's outbound mux
+before any of its own data exists, and the mux waits for that burst. Its data is behind the
+other chain's burst on the inbound path. That burst's hop is full, because its output waits
+behind the first AW at the mux. Each chain waits on the other.
+
+With `RemoteWriteWholeBurst` (default on) the wide path's data first fills a buffer of
+`RemoteWriteBufBeats` beats, by default one 4 KiB page, the longest burst. A burst's AW leaves only
+once all of its beats are in the buffer, and its W beats follow right behind. A burst that has
+taken a port's write order therefore never waits for data. A hop holds each burst whole before
+forwarding it, which adds one burst's worth of latency per hop.
+
+`test/xdma_concurrent_chains_body.sv` builds the system: per chip an `axi_mux` of the two
+clusters' wide masters and one crossbar port into the chip. `tb_xdma_concurrent_chains` runs
+both chains at four offsets between them and checks every payload. `tb_xdma_concurrent_chains_deadlock`
+turns the buffer off and passes only if the run deadlocks, so the testbench is known to reach the
+hazard. When it deadlocks it prints, per node, the wide AWs accepted against the W beats sent.

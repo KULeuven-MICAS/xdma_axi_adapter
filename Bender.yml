@@ -55,3 +55,6 @@ sources:
       - test/xdma_mutual_exchange_2node_body.sv
       - test/tb_xdma_mutual_exchange_2node.sv
       - test/tb_xdma_mutual_exchange_2node_drop.sv
+      - test/xdma_concurrent_chains_body.sv
+      - test/tb_xdma_concurrent_chains.sv
+      - test/tb_xdma_concurrent_chains_deadlock.sv
