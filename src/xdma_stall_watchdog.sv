@@ -32,7 +32,8 @@ module xdma_stall_watchdog #(
     /// can trip the watchdog on purpose without polluting the simulator's error count.
     parameter bit          ErrorOnStall = 1'b1,
     /// Instance name reported in the simulation-only diagnostic.
-    parameter string       Name         = "xdma"
+    /// Leave untyped: DC accepts a packed string literal but not the string type.
+    parameter              Name         = "xdma"
 ) (
     /// Clock
     input  logic clk_i,
