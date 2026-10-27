@@ -241,7 +241,11 @@ module xdma_req_backend #(
     logic [CntWidth-1:0]                        owed_q, owed_d;
     logic [CntWidth-1:0]                        head_burst_beats;
 
-    // Data is taken only for a granted transfer, as the data path takes it without the buffer
+    // A data write (WriteDataIdx with dma_type set) is taken only once granted, as the data path
+    // takes it without the buffer. Anything else, such as the payload a remote READ sends back
+    // (dma_type 0, never granted), is taken as it comes.
+    logic in_needs_grant;
+    assign in_needs_grant = (write_req_idx_i == WriteDataIdx) && write_req_desc_i.dma_type;
     stream_fifo #(
         .FALL_THROUGH(1'b0),
         .DEPTH       (WBufBeats),
@@ -253,13 +257,13 @@ module xdma_req_backend #(
         .testmode_i(1'b0),
         .usage_o   (buf_usage),
         .data_i    (write_req_data_i),
-        .valid_i   (write_req_data_valid_i & write_req_grant_i),
+        .valid_i   (write_req_data_valid_i & (write_req_grant_i | ~in_needs_grant)),
         .ready_o   (buf_in_ready),
         .data_o    (dp_data),
         .valid_o   (buf_valid),
         .ready_i   (dp_data_ready & (owed_q != '0))
     );
-    assign write_req_data_ready_o = buf_in_ready & write_req_grant_i;
+    assign write_req_data_ready_o = buf_in_ready & (write_req_grant_i | ~in_needs_grant);
     // a W beat goes out only for a burst whose AW has left
     assign dp_data_valid          = buf_valid & (owed_q != '0);
 
@@ -346,10 +350,11 @@ module xdma_req_backend #(
     // the next burst then leaves before any of its own data exists, and a burst can run dry in
     // the middle. With WholeBurstWrite the AW instead waits until its own burst is buffered
     // whole (aw_burst_whole), so the data of a burst that has taken a shared port's write order
-    // is always there.
+    // is always there. Every other AW (e.g. a remote read's payload) waits for its whole burst
+    // too, so the beats owed by the AWs that have left (owed_q) never exceed the buffer.
     axi_dma_req_o.aw_valid = (current_req_aw_desc.is_write_data) ?
         ~aw_emitter_empty && write_req_grant_i && (WholeBurstWrite ? aw_burst_whole : w_valid) :
-        ~aw_emitter_empty;
+        ~aw_emitter_empty && (WholeBurstWrite ? aw_burst_whole : 1'b1);
     aw_emitter_pop         = axi_dma_resp_i.aw_ready & axi_dma_req_o.aw_valid;
     // B signals
     // we are always ready to accept b signals, as we do not need them

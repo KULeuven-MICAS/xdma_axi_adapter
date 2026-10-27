@@ -27,7 +27,8 @@ TBS           ?= find_first_one_idx \
                  xdma_mutual_exchange_2node \
                  xdma_mutual_exchange_2node_drop \
                  xdma_concurrent_chains \
-                 xdma_concurrent_chains_deadlock
+                 xdma_concurrent_chains_deadlock \
+                 xdma_remote_read_payload
 
 SIM_TARGETS := $(addsuffix .log,$(addprefix sim-,$(TBS)))
 

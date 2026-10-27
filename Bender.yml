@@ -58,3 +58,4 @@ sources:
       - test/xdma_concurrent_chains_body.sv
       - test/tb_xdma_concurrent_chains.sv
       - test/tb_xdma_concurrent_chains_deadlock.sv
+      - test/tb_xdma_remote_read_payload.sv
